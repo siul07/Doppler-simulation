@@ -15,7 +15,8 @@
     .card { border:1px solid #eee; border-radius:12px; padding:12px 14px; flex:1 1 320px; }
     label { font-size: 13px; color: var(--muted); display:block; margin-bottom:4px; }
     input[type="range"] { width:100%; }
-    input, select { padding:6px 8px; border:1px solid #ddd; border-radius:8px; width:100%; }
+    input, select, button { padding:6px 8px; border:1px solid #ddd; border-radius:8px; }
+    select, input[type="number"] { width:100%; }
     .inline { display:flex; gap:10px; }
     .inline > div { flex:1; }
     .plots { display:grid; grid-template-columns: 1fr; gap:16px; }
@@ -24,6 +25,9 @@
     .muted { color:#666; }
     .hint { font-size:12px; color:#555; }
     .pill { display:inline-block; background:#f3f7ff; color:#284a9f; padding:2px 8px; border-radius:999px; font-size:12px; }
+    .btnrow { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+    .btnrow button { cursor:pointer; background:#f7f7f7; }
+    .info { font-size:12px; color:#333; background:#fafafa; border:1px solid #eee; border-radius:8px; padding:8px; margin-top:8px;}
   </style>
 </head>
 <body>
@@ -33,7 +37,7 @@
 </header>
 <main>
   <div class="row">
-    <div class="card" style="max-width:360px">
+    <div class="card" style="max-width:380px">
       <label for="file">Linientabelle (.tab, whitespace-getrennt: Name λ[nm] Amp)</label>
       <input id="file" type="file" accept=".tab,.txt" />
       <div class="hint">Wenn leer, werden Balmer-Defaults verwendet.</div>
@@ -45,10 +49,30 @@
           <div class="muted"><span id="vLabel">0</span> m/s</div>
         </div>
         <div>
-          <label for="R">Auflösung R (FWHM≈λ/R)</label>
-          <input id="R" type="number" value="70000" min="1000" step="1000" />
+          <label for="vmax">v<sub>max</sub> [m/s]</label>
+          <input id="vmax" type="number" value="1000" step="50" />
         </div>
       </div>
+
+      <!-- (7) Instrument-Modell: R oder FWHM -->
+      <div class="inline" style="margin-top:8px">
+        <div>
+          <label for="widthMode">Linienbreite</label>
+          <select id="widthMode">
+            <option value="R" selected>Auflösung R (FWHM≈λ/R)</option>
+            <option value="FWHM">FWHM [nm] (konstant)</option>
+          </select>
+        </div>
+        <div id="wrapR">
+          <label for="R">Wert</label>
+          <input id="R" type="number" value="70000" min="1000" step="1000" />
+        </div>
+        <div id="wrapFWHM" style="display:none">
+          <label for="FWHM">Wert</label>
+          <input id="FWHM" type="number" value="0.01" min="0.0001" step="0.0001" />
+        </div>
+      </div>
+
       <div class="inline" style="margin-top:8px">
         <div>
           <label for="xmin">x<sub>min</sub> [nm]</label>
@@ -75,6 +99,7 @@
           <select id="colorBy">
             <option value="velocity">nach Geschwindigkeit (blau/rot/schwarz)</option>
             <option value="fixed">fix (schwarz)</option>
+            <option value="wavelength">nach Wellenlänge (violett→rot)</option>
           </select>
         </div>
         <div>
@@ -82,6 +107,19 @@
           <input id="prec" type="number" value="200000" min="20000" step="20000" />
         </div>
       </div>
+
+      <!-- (3) Play/Export-Buttons -->
+      <div class="btnrow">
+        <button id="play">Play</button>
+        <button id="png1">PNG Gesamt</button>
+        <button id="png2">PNG Zoom</button>
+        <button id="csv">CSV (aktuelles Spektrum)</button>
+        <button id="share">Link kopieren</button>
+      </div>
+
+      <!-- (9) Info-Box -->
+      <div class="info" id="infobox">z = 0.000000 • Δλ = 0.000 pm • Δν = 0.000 GHz</div>
+
       <hr />
       <div class="muted" id="meta">Datei: – | Linien: –</div>
     </div>
@@ -101,8 +139,9 @@
 <script>
 "use strict";
 
-// Physik-Konstanten
+// --- Konstanten/Utils -------------------------------------------------------
 const C = 299792458.0; // m/s
+const NM = 1e-9;
 
 // Default-Linien (Name, λ[nm], Amplitude)
 let lines = [
@@ -112,26 +151,47 @@ let lines = [
   ["Hδ", 410.174, 0.30]
 ];
 
-// UI-Refs
-const elFile = document.getElementById('file');
-const elV = document.getElementById('v');
+const elFile   = document.getElementById('file');
+const elV      = document.getElementById('v');
 const elVLabel = document.getElementById('vLabel');
-const elR = document.getElementById('R');
-const elXmin = document.getElementById('xmin');
-const elXmax = document.getElementById('xmax');
-const elZoom = document.getElementById('zoom');
-const elDz = document.getElementById('dz');
-const elColorBy = document.getElementById('colorBy');
-const elPrec = document.getElementById('prec');
-const elMeta = document.getElementById('meta');
+const elVmax   = document.getElementById('vmax');
+const elR      = document.getElementById('R');
+const elFWHM   = document.getElementById('FWHM');
+const elMode   = document.getElementById('widthMode');
+const elWrapR  = document.getElementById('wrapR');
+const elWrapF  = document.getElementById('wrapFWHM');
+const elXmin   = document.getElementById('xmin');
+const elXmax   = document.getElementById('xmax');
+const elZoom   = document.getElementById('zoom');
+const elDz     = document.getElementById('dz');
+const elColorBy= document.getElementById('colorBy');
+const elPrec   = document.getElementById('prec');
+const elMeta   = document.getElementById('meta');
+const elInfo   = document.getElementById('infobox');
 
-let x = [];
-let y = [];
-let xZoom = [];
-let yZoom = [];
+let x=[], y=[], xZoom=[], yZoom=[];
+let currentFileLabel = "–";
+let timer=null, dir=1;
 
-// Gaußprofil; sigma aus FWHM≈λ/R
-function gauss(x, A, x0, sigma) {
+function clamp(v,a,b){ return Math.min(b, Math.max(a,v)); }
+
+function wavelengthToRGB(lam){
+  // 380..780 nm → RGB (grobe Approximation)
+  let r=0,g=0,b=0,l=lam;
+  if (l<380 || l>780) return 'rgb(128,128,128)';
+  if (l<440){ let t=(l-380)/(60); r=-(t)+1; g=0; b=1; }
+  else if (l<490){ let t=(l-440)/50; r=0; g=t; b=1; }
+  else if (l<510){ let t=(l-490)/20; r=0; g=1; b=1-t; }
+  else if (l<580){ let t=(l-510)/70; r=t; g=1; b=0; }
+  else if (l<645){ let t=(l-580)/65; r=1; g=1-t; b=0; }
+  else { r=1; g=0; b=0; }
+  if (l<420){ let f=0.3+0.7*(l-380)/40; r*=f; g*=f; b*=f; }
+  if (l>700){ let f=0.3+0.7*(780-l)/80; r*=f; g*=f; b*=f; }
+  return `rgb(${Math.round(r*255)},${Math.round(g*255)},${Math.round(b*255)})`;
+}
+
+// Gauß; sigma aus FWHM
+function gauss(x, A, x0, sigma){
   const out = new Float64Array(x.length);
   const inv2s2 = 1.0/(2.0*sigma*sigma);
   for (let i=0;i<x.length;i++){
@@ -141,49 +201,31 @@ function gauss(x, A, x0, sigma) {
   return out;
 }
 
-function synthSpectrum(x, lam_nm, amp, v_ms, R){
-  const lamShift = lam_nm.map(l => l*(1.0 + v_ms/C));
-  const fwhm = lam_nm.map(l => l/R);
-  const sigma = fwhm.map(f => f/(2.0*Math.sqrt(2.0*Math.log(2.0))));
-  const yAbs = new Float64Array(x.length);
-  for (let k=0;k<lam_nm.length;k++){
-    const g = gauss(x, amp[k], lamShift[k], Math.max(sigma[k], 1e-6));
-    for (let i=0;i<x.length;i++) yAbs[i]+=g[i];
-  }
-  // Absorptionslinien: 1 - Sum
-  const out = new Float64Array(x.length);
-  for (let i=0;i<x.length;i++) out[i] = Math.max(0, Math.min(1.1, 1.0 - yAbs[i]));
-  return out;
+function buildAxis(xmin, xmax, npts){
+  const arr = new Float64Array(npts);
+  const dx = (xmax - xmin)/(npts-1);
+  for (let i=0;i<npts;i++) arr[i]=xmin+i*dx;
+  return arr;
 }
 
 function parseTab(text){
   const lam=[], amp=[], name=[];
-  const lines = text.split(/\r?\n/);
-  for (const raw of lines){
+  const ls = text.split(/\r?\n/);
+  for (const raw of ls){
     const s = raw.trim();
     if (!s || s.startsWith('#') || s.startsWith('//') || s.startsWith('%')) continue;
     const toks = s.split(/\s+/);
-    if (!toks.length) continue;
-    // floats sammeln
     const floats=[], nonfloats=[];
     for (const t of toks){
       const v = Number(t.replace(',', '.'));
       if (!Number.isNaN(v) && t.match(/^[\d\.,+-]+$/)) floats.push(v); else nonfloats.push(t);
     }
     if (floats.length<2) continue;
-    lam.push(floats[0]);
-    amp.push(floats[1]);
+    lam.push(floats[0]); amp.push(floats[1]);
     name.push(nonfloats.length? nonfloats.join(' ') : `line_${lam.length}`);
   }
   if (!lam.length) throw new Error("Keine verwertbaren Zeilen in der .tab gefunden.");
   return {name, lam, amp};
-}
-
-function buildAxis(xmin, xmax, npts){
-  const arr = new Float64Array(npts);
-  const dx = (xmax - xmin)/(npts-1);
-  for (let i=0;i<npts;i++) arr[i]=xmin+i*dx;
-  return arr;
 }
 
 function colorForV(v){
@@ -192,18 +234,60 @@ function colorForV(v){
   return 'black';
 }
 
+// (7) Breitenmodell: fwhm_nm entweder λ/R oder konstant
+function fwhmArray(lam_nm, mode, R, FWHM){
+  if (mode==='FWHM') return lam_nm.map(_=>FWHM);
+  // mode==='R'
+  return lam_nm.map(l => l/Math.max(1, R));
+}
+
+function synthSpectrum(x, lam_nm, amp, v_ms, mode, R, FWHM){
+  const lamShift = lam_nm.map(l => l*(1.0 + v_ms/C));
+  const fwhm = fwhmArray(lam_nm, mode, R, FWHM);
+  const sigma = fwhm.map(f => f/(2.0*Math.sqrt(2.0*Math.log(2.0))));
+  const yAbs = new Float64Array(x.length);
+  for (let k=0;k<lam_nm.length;k++){
+    const g = gauss(x, amp[k], lamShift[k], Math.max(sigma[k], 1e-6));
+    for (let i=0;i<x.length;i++) yAbs[i]+=g[i];
+  }
+  const out = new Float64Array(x.length);
+  for (let i=0;i<x.length;i++) out[i] = Math.max(0, Math.min(1.1, 1.0 - yAbs[i]));
+  return out;
+}
+
+// --- Rendering ---------------------------------------------------------------
+function decimateForColor(xs, ys, maxSeg=600){
+  // Für Wellenlängen-Farbmodus: segmentiere auf ~maxSeg Segmente
+  const n = xs.length;
+  if (n<=maxSeg) return [{x: xs, y: ys}];
+  const step = Math.floor(n/maxSeg);
+  const arr=[];
+  for (let i=0; i<n-1; i+=step){
+    const j = Math.min(i+step, n-1);
+    arr.push({x: xs.slice(i, j+1), y: ys.slice(i, j+1)});
+  }
+  return arr;
+}
+
 function update(){
-  const v = Number(elV.value);
-  elVLabel.textContent = v.toFixed(0);
+  // Grenzen/Parameter
+  const vmax = Number(elVmax.value);
+  elV.max = vmax; elV.min = -vmax;
+  const v = clamp(Number(elV.value), -vmax, vmax);
+  elV.value = v; elVLabel.textContent = v.toFixed(0);
+
+  const mode = elMode.value;
   const R = Math.max(1000, Number(elR.value));
+  const FWHM = Math.max(0.000001, Number(elFWHM.value));
   const xmin = Number(elXmin.value);
   const xmax = Number(elXmax.value);
-  const npts = Math.max(20000, Number(elPrec.value));
+  let npts = Math.max(20000, Number(elPrec.value));
+  npts = Math.min(npts, 600000); // Cap (Performance)
+
   const zc = Number(elZoom.value);
   const dz = Number(elDz.value);
   const colorBy = elColorBy.value;
 
-  // x-Achse bei Bedarf neu aufbauen (wenn Grenzen/Punkte geändert)
   if (x.length !== npts || x[0]!==xmin || x[x.length-1]!==xmax){
     x = Array.from(buildAxis(xmin, xmax, npts));
   }
@@ -211,71 +295,109 @@ function update(){
   const lam = lines.map(l=>l[1]);
   const amp = lines.map(l=>l[2]);
 
-  y = Array.from(synthSpectrum(x, lam, amp, v, R));
+  y = Array.from(synthSpectrum(x, lam, amp, v, mode, R, FWHM));
 
   const xzMin = zc - dz, xzMax = zc + dz;
   let ix0 = 0, ix1 = x.length-1;
-  // binäre Suche wäre schön; linear reicht hier:
   while (ix0 < x.length && x[ix0] < xzMin) ix0++;
   ix1 = ix0;
   while (ix1 < x.length && x[ix1] <= xzMax) ix1++;
   xZoom = x.slice(ix0, ix1);
   yZoom = y.slice(ix0, ix1);
 
-  draw(v, colorBy, zc);
-  elMeta.textContent = `Datei: ${currentFileLabel} | Linien: ${lines.length} | R≈${R} | Punkte: ${npts}`;
+  draw(v, colorBy, zc, mode, R, FWHM);
+  elMeta.textContent = `Datei: ${currentFileLabel} | Linien: ${lines.length} | ${mode==='R'?'R≈'+R:'FWHM≈'+FWHM+' nm'} | Punkte: ${npts}`;
+
+  // (9) Info: z, Δλ, Δν
+  const z = v/C;
+  const dlam_pm = (zc*(1+v/C) - zc)*1e3;                 // pm
+  const nu0 = C/(zc*NM);                                  // Hz
+  const dnu_GHz = -(nu0 * v / C) / 1e9;                   // ≈ -nu * v/c in GHz
+  elInfo.textContent = `z = ${z.toFixed(6)} • Δλ = ${dlam_pm>=0?'+':''}${dlam_pm.toFixed(3)} pm • Δν = ${dnu_GHz>=0?'+':''}${dnu_GHz.toFixed(3)} GHz`;
 }
 
-function draw(v, colorBy, zc){
-  const col = (colorBy==='velocity') ? colorForV(v) : 'black';
+function buildTracesWithColorByWavelength(xs, ys){
+  const segs = decimateForColor(xs, ys, 600);
+  return segs.map(seg => ({
+    x: seg.x, y: seg.y, mode:'lines',
+    line:{width:1.4, color: wavelengthToRGB(seg.x[0])},
+    hovertemplate:'λ %{x:.3f} nm<br>Flux %{y:.3f}<extra></extra>',
+    showlegend:false
+  }));
+}
 
-  const trace1 = {
-    x: x, y: y, mode: 'lines',
-    line: {width: 1.4, color: col},
-    hovertemplate: 'λ %{x:.3f} nm<br>Flux %{y:.3f}<extra></extra>'
-  };
+function draw(v, colorBy, zc, mode, R, FWHM){
+  const baseColor = (colorBy==='velocity') ? colorForV(v) : 'black';
+
+  // (10) Referenz- und Shift-Marker
+  const restShapes = lines.map(L => ({
+    type:'line', x0:L[1], x1:L[1], y0:0, y1:1.05,
+    line:{color:'#e6e6e6', width:1, dash:'dot'}
+  }));
+  const shiftShapes = lines.map(L => {
+    const lamShift = L[1]*(1+v/C);
+    return {
+      type:'line', x0:lamShift, x1:lamShift, y0:0, y1:1.05,
+      line:{color: (colorBy==='velocity'?baseColor:'#888'), width:1.4}
+    };
+  });
+
+  // Gesamt
+  let data1;
+  if (colorBy==='wavelength'){
+    data1 = buildTracesWithColorByWavelength(x, y);
+  } else {
+    data1 = [{
+      x:x, y:y, mode:'lines',
+      line:{width:1.4, color:baseColor},
+      hovertemplate:'λ %{x:.3f} nm<br>Flux %{y:.3f}<extra></extra>'
+    }];
+  }
   const layout1 = {
     margin:{l:55,r:15,t:32,b:45},
     xaxis:{title:'Wellenlänge λ [nm]', range:[x[0], x[x.length-1]]},
     yaxis:{title:'Flux', range:[0,1.05]},
-    shapes: lines.map(L => ({
-      type:'line', x0:L[1], x1:L[1], y0:0, y1:1.05,
-      line:{color:'#e6e6e6', width:1, dash:'dot'}
-    })),
+    shapes:[...restShapes, ...shiftShapes],
     title:{text:'Doppler-Verschiebung – Gesamtspektrum', font:{size:16}}
   };
+  Plotly.react('g1', data1, layout1, {displayModeBar:false});
 
-  const trace2 = {
-    x: xZoom, y: yZoom, mode: 'lines',
-    line: {width: 1.4, color: col},
-    hovertemplate: 'λ %{x:.4f} nm<br>Flux %{y:.3f}<extra></extra>'
-  };
+  // Zoom
+  let data2;
+  if (colorBy==='wavelength'){
+    data2 = buildTracesWithColorByWavelength(xZoom, yZoom);
+  } else {
+    data2 = [{
+      x:xZoom, y:yZoom, mode:'lines',
+      line:{width:1.4, color:baseColor},
+      hovertemplate:'λ %{x:.4f} nm<br>Flux %{y:.3f}<extra></extra>'
+    }];
+  }
+  const lamShift = Number(elZoom.value) * (1.0 + Number(elV.value)/C);
+  const dpm = (lamShift - Number(elZoom.value))*1e3;
+
   const layout2 = {
     margin:{l:55,r:15,t:32,b:45},
     xaxis:{title:'λ [nm] (Zoom)', range:[xZoom[0], xZoom[xZoom.length-1]]},
     yaxis:{title:'Flux', range:[0,1.05]},
-    title:{text:`Zoom um ${Number(elZoom.value).toFixed(3)} nm`, font:{size:16}}
-  };
-
-  Plotly.react('g1', [trace1], layout1, {displayModeBar:false});
-  Plotly.react('g2', [trace2], layout2, {displayModeBar:false});
-
-  // Δλ @ Zoom-Zentrum (pm)
-  const lamShift = Number(elZoom.value) * (1.0 + Number(elV.value)/C);
-  const dpm = (lamShift - Number(elZoom.value))*1e3;
-  // kleine Anzeige rechts oben im zweiten Plot
-  Plotly.relayout('g2', {
+    title:{text:`Zoom um ${Number(elZoom.value).toFixed(3)} nm`, font:{size:16}},
+    shapes:[{
+      type:'line', x0:Number(elZoom.value), x1:Number(elZoom.value), y0:0, y1:1.05,
+      line:{color:'#e6e6e6', width:1, dash:'dot'}
+    },{
+      type:'line', x0:lamShift, x1:lamShift, y0:0, y1:1.05,
+      line:{color:(colorBy==='velocity'?baseColor:'#888'), width:1.4}
+    }],
     annotations: [{
       x: 0.98, y: 0.98, xref:'paper', yref:'paper',
       text: `Δλ @ ${Number(elZoom.value).toFixed(3)} nm: ${dpm>=0?'+':''}${dpm.toFixed(3)} pm`,
       showarrow:false, bgcolor:'#fff', bordercolor:'#ddd', borderwidth:1, opacity:0.9
     }]
-  });
+  };
+  Plotly.react('g2', data2, layout2, {displayModeBar:false});
 }
 
-let currentFileLabel = "–";
-
-// Events
+// --- Events / Controls -------------------------------------------------------
 elFile.addEventListener('change', async (e)=>{
   const f = e.target.files[0];
   if (!f) return;
@@ -283,7 +405,6 @@ elFile.addEventListener('change', async (e)=>{
   const text = await f.text();
   try{
     const parsed = parseTab(text);
-    // Re-combine zu unserem Format
     lines = parsed.name.map((nm,i)=>[nm, parsed.lam[i], parsed.amp[i]]);
   }catch(err){
     alert("Fehler beim Einlesen: " + err.message);
@@ -292,13 +413,75 @@ elFile.addEventListener('change', async (e)=>{
   update();
 });
 
-[elV, elR, elXmin, elXmax, elZoom, elDz, elColorBy, elPrec].forEach(el=>{
+[elV, elVmax, elR, elFWHM, elXmin, elXmax, elZoom, elDz, elColorBy, elPrec].forEach(el=>{
   el.addEventListener('input', update);
 });
 
-// Initial-Draw
+elMode.addEventListener('change', ()=>{
+  const m = elMode.value;
+  if (m==='R'){ elWrapR.style.display='block'; elWrapF.style.display='none'; }
+  else       { elWrapR.style.display='none';  elWrapF.style.display='block'; }
+  update();
+});
+
+// (3) Play/Pause
+document.getElementById('play').onclick = ()=>{
+  if (timer){ clearInterval(timer); timer=null; return; }
+  timer = setInterval(()=>{
+    let vmax = Number(elVmax.value);
+    let v = Number(elV.value) + dir*5;
+    if (v >  vmax){ v=vmax; dir=-1; }
+    if (v < -vmax){ v=-vmax; dir=1; }
+    elV.value = v;
+    update();
+  }, 30);
+};
+
+// (4) Exporte
+document.getElementById('png1').onclick = ()=> Plotly.downloadImage('g1', {format:'png', filename:'spectrum_full'});
+document.getElementById('png2').onclick = ()=> Plotly.downloadImage('g2', {format:'png', filename:'spectrum_zoom'});
+document.getElementById('csv').onclick  = ()=>{
+  let csv = 'lambda_nm,flux\n';
+  for (let i=0;i<x.length;i++) csv += `${x[i]},${y[i]}\n`;
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'spectrum.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+// Share-Link (mit Parametern)
+document.getElementById('share').onclick = ()=>{
+  const p = new URLSearchParams({
+    v: elV.value, vmax: elVmax.value,
+    mode: elMode.value, R: elR.value, FWHM: elFWHM.value,
+    xmin: elXmin.value, xmax: elXmax.value,
+    zoom: elZoom.value, dz: elDz.value,
+    colorBy: elColorBy.value, prec: elPrec.value
+  });
+  const url = `${location.origin}${location.pathname}?${p.toString()}`;
+  navigator.clipboard.writeText(url).then(()=>alert('Link kopiert:\n'+url));
+};
+
+// URL-Parameter anwenden (optional QR mit Zuständen)
+(function applyParams(){
+  const p = new URLSearchParams(window.location.search);
+  if (p.has('v'))     elV.value = p.get('v');
+  if (p.has('vmax'))  elVmax.value = p.get('vmax');
+  if (p.has('mode'))  { elMode.value = p.get('mode'); elMode.dispatchEvent(new Event('change')); }
+  if (p.has('R'))     elR.value = p.get('R');
+  if (p.has('FWHM'))  elFWHM.value = p.get('FWHM');
+  if (p.has('xmin'))  elXmin.value = p.get('xmin');
+  if (p.has('xmax'))  elXmax.value = p.get('xmax');
+  if (p.has('zoom'))  elZoom.value = p.get('zoom');
+  if (p.has('dz'))    elDz.value = p.get('dz');
+  if (p.has('colorBy')) elColorBy.value = p.get('colorBy');
+  if (p.has('prec'))  elPrec.value = p.get('prec');
+})();
+
+// Initial
 update();
 </script>
 </body>
 </html>
-
