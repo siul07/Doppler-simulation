@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Doppler-Simulation – Radialgeschwindigkeit</title>
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+  <style>
+    :root { --fg:#111; --bg:#fff; --muted:#777; --accent:#0b5fff; }
+    body { font: 16px/1.4 system-ui, Segoe UI, Roboto, Arial, sans-serif; color:var(--fg); background:var(--bg); margin:0; }
+    header { padding:16px 20px; border-bottom:1px solid #eee; }
+    main { padding: 16px 20px; max-width: 1200px; margin: 0 auto; }
+    h1 { font-size: 20px; margin: 0 0 6px; }
+    .row { display:flex; gap:16px; flex-wrap:wrap; }
+    .card { border:1px solid #eee; border-radius:12px; padding:12px 14px; flex:1 1 320px; }
+    label { font-size: 13px; color: var(--muted); display:block; margin-bottom:4px; }
+    input[type="range"] { width:100%; }
+    input, select { padding:6px 8px; border:1px solid #ddd; border-radius:8px; width:100%; }
+    .inline { display:flex; gap:10px; }
+    .inline > div { flex:1; }
+    .plots { display:grid; grid-template-columns: 1fr; gap:16px; }
+    #g1, #g2 { width:100%; height:420px; }
+    footer { padding:12px 20px; color:#666; font-size:13px; }
+    .muted { color:#666; }
+    .hint { font-size:12px; color:#555; }
+    .pill { display:inline-block; background:#f3f7ff; color:#284a9f; padding:2px 8px; border-radius:999px; font-size:12px; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Doppler-Simulation (Radialgeschwindigkeit) <span class="pill">client-side</span></h1>
+  <div class="muted">Interaktive Rot/Blauverschiebung von Spektrallinien – ideal für QR-Code in der Seminararbeit.</div>
+</header>
+<main>
+  <div class="row">
+    <div class="card" style="max-width:360px">
+      <label for="file">Linientabelle (.tab, whitespace-getrennt: Name λ[nm] Amp)</label>
+      <input id="file" type="file" accept=".tab,.txt" />
+      <div class="hint">Wenn leer, werden Balmer-Defaults verwendet.</div>
+      <hr />
+      <div class="inline">
+        <div>
+          <label for="v">v [m/s]</label>
+          <input id="v" type="range" min="-1000" max="1000" step="1" value="0" />
+          <div class="muted"><span id="vLabel">0</span> m/s</div>
+        </div>
+        <div>
+          <label for="R">Auflösung R (FWHM≈λ/R)</label>
+          <input id="R" type="number" value="70000" min="1000" step="1000" />
+        </div>
+      </div>
+      <div class="inline" style="margin-top:8px">
+        <div>
+          <label for="xmin">x<sub>min</sub> [nm]</label>
+          <input id="xmin" type="number" value="300" step="1" />
+        </div>
+        <div>
+          <label for="xmax">x<sub>max</sub> [nm]</label>
+          <input id="xmax" type="number" value="800" step="1" />
+        </div>
+      </div>
+      <div class="inline" style="margin-top:8px">
+        <div>
+          <label for="zoom">Zoom-Zentrum [nm]</label>
+          <input id="zoom" type="number" value="656.279" step="0.001" />
+        </div>
+        <div>
+          <label for="dz">±Zoom [nm]</label>
+          <input id="dz" type="number" value="0.05" step="0.01" />
+        </div>
+      </div>
+      <div class="inline" style="margin-top:8px">
+        <div>
+          <label for="colorBy">Farbe</label>
+          <select id="colorBy">
+            <option value="velocity">nach Geschwindigkeit (blau/rot/schwarz)</option>
+            <option value="fixed">fix (schwarz)</option>
+          </select>
+        </div>
+        <div>
+          <label for="prec">Punkte (Performance)</label>
+          <input id="prec" type="number" value="200000" min="20000" step="20000" />
+        </div>
+      </div>
+      <hr />
+      <div class="muted" id="meta">Datei: – | Linien: –</div>
+    </div>
+
+    <div class="card" style="flex:2 1 600px">
+      <div class="plots">
+        <div id="g1"></div>
+        <div id="g2"></div>
+      </div>
+    </div>
+  </div>
+</main>
+<footer>
+  <div class="hint">Hinweis: Alles läuft rein im Browser (keine Datenuploads). Du kannst die Seite offline speichern oder über GitHub Pages veröffentlichen.</div>
+</footer>
+
+<script>
+"use strict";
+
+// Physik-Konstanten
+const C = 299792458.0; // m/s
+
+// Default-Linien (Name, λ[nm], Amplitude)
+let lines = [
+  ["Hα", 656.279, 0.80],
+  ["Hβ", 486.133, 0.40],
+  ["Hγ", 434.047, 0.35],
+  ["Hδ", 410.174, 0.30]
+];
+
+// UI-Refs
+const elFile = document.getElementById('file');
+const elV = document.getElementById('v');
+const elVLabel = document.getElementById('vLabel');
+const elR = document.getElementById('R');
+const elXmin = document.getElementById('xmin');
+const elXmax = document.getElementById('xmax');
+const elZoom = document.getElementById('zoom');
+const elDz = document.getElementById('dz');
+const elColorBy = document.getElementById('colorBy');
+const elPrec = document.getElementById('prec');
+const elMeta = document.getElementById('meta');
+
+let x = [];
+let y = [];
+let xZoom = [];
+let yZoom = [];
+
+// Gaußprofil; sigma aus FWHM≈λ/R
+function gauss(x, A, x0, sigma) {
+  const out = new Float64Array(x.length);
+  const inv2s2 = 1.0/(2.0*sigma*sigma);
+  for (let i=0;i<x.length;i++){
+    const d = x[i]-x0;
+    out[i] = A*Math.exp(-d*d*inv2s2);
+  }
+  return out;
+}
+
+function synthSpectrum(x, lam_nm, amp, v_ms, R){
+  const lamShift = lam_nm.map(l => l*(1.0 + v_ms/C));
+  const fwhm = lam_nm.map(l => l/R);
+  const sigma = fwhm.map(f => f/(2.0*Math.sqrt(2.0*Math.log(2.0))));
+  const yAbs = new Float64Array(x.length);
+  for (let k=0;k<lam_nm.length;k++){
+    const g = gauss(x, amp[k], lamShift[k], Math.max(sigma[k], 1e-6));
+    for (let i=0;i<x.length;i++) yAbs[i]+=g[i];
+  }
+  // Absorptionslinien: 1 - Sum
+  const out = new Float64Array(x.length);
+  for (let i=0;i<x.length;i++) out[i] = Math.max(0, Math.min(1.1, 1.0 - yAbs[i]));
+  return out;
+}
+
+function parseTab(text){
+  const lam=[], amp=[], name=[];
+  const lines = text.split(/\r?\n/);
+  for (const raw of lines){
+    const s = raw.trim();
+    if (!s || s.startsWith('#') || s.startsWith('//') || s.startsWith('%')) continue;
+    const toks = s.split(/\s+/);
+    if (!toks.length) continue;
+    // floats sammeln
+    const floats=[], nonfloats=[];
+    for (const t of toks){
+      const v = Number(t.replace(',', '.'));
+      if (!Number.isNaN(v) && t.match(/^[\d\.,+-]+$/)) floats.push(v); else nonfloats.push(t);
+    }
+    if (floats.length<2) continue;
+    lam.push(floats[0]);
+    amp.push(floats[1]);
+    name.push(nonfloats.length? nonfloats.join(' ') : `line_${lam.length}`);
+  }
+  if (!lam.length) throw new Error("Keine verwertbaren Zeilen in der .tab gefunden.");
+  return {name, lam, amp};
+}
+
+function buildAxis(xmin, xmax, npts){
+  const arr = new Float64Array(npts);
+  const dx = (xmax - xmin)/(npts-1);
+  for (let i=0;i<npts;i++) arr[i]=xmin+i*dx;
+  return arr;
+}
+
+function colorForV(v){
+  if (v<0) return 'blue';
+  if (v>0) return 'red';
+  return 'black';
+}
+
+function update(){
+  const v = Number(elV.value);
+  elVLabel.textContent = v.toFixed(0);
+  const R = Math.max(1000, Number(elR.value));
+  const xmin = Number(elXmin.value);
+  const xmax = Number(elXmax.value);
+  const npts = Math.max(20000, Number(elPrec.value));
+  const zc = Number(elZoom.value);
+  const dz = Number(elDz.value);
+  const colorBy = elColorBy.value;
+
+  // x-Achse bei Bedarf neu aufbauen (wenn Grenzen/Punkte geändert)
+  if (x.length !== npts || x[0]!==xmin || x[x.length-1]!==xmax){
+    x = Array.from(buildAxis(xmin, xmax, npts));
+  }
+
+  const lam = lines.map(l=>l[1]);
+  const amp = lines.map(l=>l[2]);
+
+  y = Array.from(synthSpectrum(x, lam, amp, v, R));
+
+  const xzMin = zc - dz, xzMax = zc + dz;
+  let ix0 = 0, ix1 = x.length-1;
+  // binäre Suche wäre schön; linear reicht hier:
+  while (ix0 < x.length && x[ix0] < xzMin) ix0++;
+  ix1 = ix0;
+  while (ix1 < x.length && x[ix1] <= xzMax) ix1++;
+  xZoom = x.slice(ix0, ix1);
+  yZoom = y.slice(ix0, ix1);
+
+  draw(v, colorBy, zc);
+  elMeta.textContent = `Datei: ${currentFileLabel} | Linien: ${lines.length} | R≈${R} | Punkte: ${npts}`;
+}
+
+function draw(v, colorBy, zc){
+  const col = (colorBy==='velocity') ? colorForV(v) : 'black';
+
+  const trace1 = {
+    x: x, y: y, mode: 'lines',
+    line: {width: 1.4, color: col},
+    hovertemplate: 'λ %{x:.3f} nm<br>Flux %{y:.3f}<extra></extra>'
+  };
+  const layout1 = {
+    margin:{l:55,r:15,t:32,b:45},
+    xaxis:{title:'Wellenlänge λ [nm]', range:[x[0], x[x.length-1]]},
+    yaxis:{title:'Flux', range:[0,1.05]},
+    shapes: lines.map(L => ({
+      type:'line', x0:L[1], x1:L[1], y0:0, y1:1.05,
+      line:{color:'#e6e6e6', width:1, dash:'dot'}
+    })),
+    title:{text:'Doppler-Verschiebung – Gesamtspektrum', font:{size:16}}
+  };
+
+  const trace2 = {
+    x: xZoom, y: yZoom, mode: 'lines',
+    line: {width: 1.4, color: col},
+    hovertemplate: 'λ %{x:.4f} nm<br>Flux %{y:.3f}<extra></extra>'
+  };
+  const layout2 = {
+    margin:{l:55,r:15,t:32,b:45},
+    xaxis:{title:'λ [nm] (Zoom)', range:[xZoom[0], xZoom[xZoom.length-1]]},
+    yaxis:{title:'Flux', range:[0,1.05]},
+    title:{text:`Zoom um ${Number(elZoom.value).toFixed(3)} nm`, font:{size:16}}
+  };
+
+  Plotly.react('g1', [trace1], layout1, {displayModeBar:false});
+  Plotly.react('g2', [trace2], layout2, {displayModeBar:false});
+
+  // Δλ @ Zoom-Zentrum (pm)
+  const lamShift = Number(elZoom.value) * (1.0 + Number(elV.value)/C);
+  const dpm = (lamShift - Number(elZoom.value))*1e3;
+  // kleine Anzeige rechts oben im zweiten Plot
+  Plotly.relayout('g2', {
+    annotations: [{
+      x: 0.98, y: 0.98, xref:'paper', yref:'paper',
+      text: `Δλ @ ${Number(elZoom.value).toFixed(3)} nm: ${dpm>=0?'+':''}${dpm.toFixed(3)} pm`,
+      showarrow:false, bgcolor:'#fff', bordercolor:'#ddd', borderwidth:1, opacity:0.9
+    }]
+  });
+}
+
+let currentFileLabel = "–";
+
+// Events
+elFile.addEventListener('change', async (e)=>{
+  const f = e.target.files[0];
+  if (!f) return;
+  currentFileLabel = f.name;
+  const text = await f.text();
+  try{
+    const parsed = parseTab(text);
+    // Re-combine zu unserem Format
+    lines = parsed.name.map((nm,i)=>[nm, parsed.lam[i], parsed.amp[i]]);
+  }catch(err){
+    alert("Fehler beim Einlesen: " + err.message);
+    return;
+  }
+  update();
+});
+
+[elV, elR, elXmin, elXmax, elZoom, elDz, elColorBy, elPrec].forEach(el=>{
+  el.addEventListener('input', update);
+});
+
+// Initial-Draw
+update();
+</script>
+</body>
+</html>
