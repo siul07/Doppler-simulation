@@ -117,6 +117,31 @@
         <button id="share">Link kopieren</button>
       </div>
 
+      <!-- CSV-Fokus: Linie / Schritt / Trenner + Buttons -->
+      <div class="inline" style="margin-top:8px">
+        <div>
+          <label for="lineSelect">Linie für CSV (λ₀)</label>
+          <select id="lineSelect"></select>
+        </div>
+        <div>
+          <label for="csvStep">v-Schritt [m/s]</label>
+          <input id="csvStep" type="number" value="10" min="1" step="1" />
+        </div>
+      </div>
+      <div class="inline" style="margin-top:8px">
+        <div>
+          <label for="csvSep">CSV-Trenner</label>
+          <select id="csvSep">
+            <option value=";" selected>Semikolon (Excel DE)</option>
+            <option value=",">Komma</option>
+          </select>
+        </div>
+        <div class="btnrow">
+          <button id="csvLine">CSV: λ vs v (ausgewählte Linie)</button>
+          <button id="csvZoom">CSV: Zoom-Bereich (λ, Flux)</button>
+        </div>
+      </div>
+
       <!-- (9) Info-Box -->
       <div class="info" id="infobox">z = 0.000000 • Δλ = 0.000 pm • Δν = 0.000 GHz</div>
 
@@ -169,6 +194,11 @@ const elPrec   = document.getElementById('prec');
 const elMeta   = document.getElementById('meta');
 const elInfo   = document.getElementById('infobox');
 
+// CSV-UI
+const elLineSelect = document.getElementById('lineSelect');
+const elCsvStep    = document.getElementById('csvStep');
+const elCsvSep     = document.getElementById('csvSep');
+
 let x=[], y=[], xZoom=[], yZoom=[];
 let currentFileLabel = "–";
 let timer=null, dir=1;
@@ -179,7 +209,7 @@ function wavelengthToRGB(lam){
   // 380..780 nm → RGB (grobe Approximation)
   let r=0,g=0,b=0,l=lam;
   if (l<380 || l>780) return 'rgb(128,128,128)';
-  if (l<440){ let t=(l-380)/(60); r=-(t)+1; g=0; b=1; }
+  if (l<440){ let t=(l-380)/60; r=-(t)+1; g=0; b=1; }
   else if (l<490){ let t=(l-440)/50; r=0; g=t; b=1; }
   else if (l<510){ let t=(l-490)/20; r=0; g=1; b=1-t; }
   else if (l<580){ let t=(l-510)/70; r=t; g=1; b=0; }
@@ -237,7 +267,6 @@ function colorForV(v){
 // (7) Breitenmodell: fwhm_nm entweder λ/R oder konstant
 function fwhmArray(lam_nm, mode, R, FWHM){
   if (mode==='FWHM') return lam_nm.map(_=>FWHM);
-  // mode==='R'
   return lam_nm.map(l => l/Math.max(1, R));
 }
 
@@ -257,7 +286,6 @@ function synthSpectrum(x, lam_nm, amp, v_ms, mode, R, FWHM){
 
 // --- Rendering ---------------------------------------------------------------
 function decimateForColor(xs, ys, maxSeg=600){
-  // Für Wellenlängen-Farbmodus: segmentiere auf ~maxSeg Segmente
   const n = xs.length;
   if (n<=maxSeg) return [{x: xs, y: ys}];
   const step = Math.floor(n/maxSeg);
@@ -270,7 +298,6 @@ function decimateForColor(xs, ys, maxSeg=600){
 }
 
 function update(){
-  // Grenzen/Parameter
   const vmax = Number(elVmax.value);
   elV.max = vmax; elV.min = -vmax;
   const v = clamp(Number(elV.value), -vmax, vmax);
@@ -282,7 +309,7 @@ function update(){
   const xmin = Number(elXmin.value);
   const xmax = Number(elXmax.value);
   let npts = Math.max(20000, Number(elPrec.value));
-  npts = Math.min(npts, 600000); // Cap (Performance)
+  npts = Math.min(npts, 600000);
 
   const zc = Number(elZoom.value);
   const dz = Number(elDz.value);
@@ -305,14 +332,14 @@ function update(){
   xZoom = x.slice(ix0, ix1);
   yZoom = y.slice(ix0, ix1);
 
-  draw(v, colorBy, zc, mode, R, FWHM);
+  draw(v, colorBy, zc);
   elMeta.textContent = `Datei: ${currentFileLabel} | Linien: ${lines.length} | ${mode==='R'?'R≈'+R:'FWHM≈'+FWHM+' nm'} | Punkte: ${npts}`;
 
   // (9) Info: z, Δλ, Δν
   const z = v/C;
-  const dlam_pm = (zc*(1+v/C) - zc)*1e3;                 // pm
-  const nu0 = C/(zc*NM);                                  // Hz
-  const dnu_GHz = -(nu0 * v / C) / 1e9;                   // ≈ -nu * v/c in GHz
+  const dlam_pm = (zc*(1+v/C) - zc)*1e3;
+  const nu0 = C/(zc*NM);
+  const dnu_GHz = -(nu0 * v / C) / 1e9;
   elInfo.textContent = `z = ${z.toFixed(6)} • Δλ = ${dlam_pm>=0?'+':''}${dlam_pm.toFixed(3)} pm • Δν = ${dnu_GHz>=0?'+':''}${dnu_GHz.toFixed(3)} GHz`;
 }
 
@@ -326,10 +353,10 @@ function buildTracesWithColorByWavelength(xs, ys){
   }));
 }
 
-function draw(v, colorBy, zc, mode, R, FWHM){
+function draw(v, colorBy, zc){
   const baseColor = (colorBy==='velocity') ? colorForV(v) : 'black';
 
-  // (10) Referenz- und Shift-Marker
+  // Referenz- und Shift-Marker
   const restShapes = lines.map(L => ({
     type:'line', x0:L[1], x1:L[1], y0:0, y1:1.05,
     line:{color:'#e6e6e6', width:1, dash:'dot'}
@@ -397,6 +424,79 @@ function draw(v, colorBy, zc, mode, R, FWHM){
   Plotly.react('g2', data2, layout2, {displayModeBar:false});
 }
 
+// --- CSV/Hilfsfunktionen ----------------------------------------------------
+function downloadText(filename, text) {
+  const blob = new Blob([text], {type:'text/plain;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function exportSpectrumCSV() {
+  const sep = elCsvSep.value;
+  let out = `lambda_nm${sep}flux\n`;
+  for (let i=0;i<x.length;i++) out += `${x[i]}${sep}${y[i]}\n`;
+  downloadText('spectrum_full.csv', out);
+}
+
+function exportZoomCSV() {
+  const sep = elCsvSep.value;
+  let out = `lambda_nm${sep}flux\n`;
+  for (let i=0;i<xZoom.length;i++) out += `${xZoom[i]}${sep}${yZoom[i]}\n`;
+  downloadText('spectrum_zoom.csv', out);
+}
+
+function exportLineVsV_CSV() {
+  const sep   = elCsvSep.value;
+  const step  = Math.max(1, Number(elCsvStep.value));
+  const vmax  = Math.max(1, Number(elVmax.value));
+  const vmin  = -vmax;
+
+  const lambda0 = Number(elLineSelect.value);
+  if (!Number.isFinite(lambda0)) { alert('Keine Linie ausgewählt.'); return; }
+
+  let lname = '';
+  for (const L of lines) if (Math.abs(L[1]-lambda0) < 1e-9) { lname = L[0] || ''; break; }
+
+  let out = `# line_name${sep}${lname}\n`;
+  out    += `# lambda0_nm${sep}${lambda0}\n`;
+  out    += `v_ms${sep}z${sep}lambda0_nm${sep}lambda_shift_nm${sep}delta_lambda_pm${sep}delta_nu_GHz\n`;
+
+  const nu0 = C/(lambda0*1e-9); // Hz
+  for (let v=vmin; v<=vmax; v+=step) {
+    const z = v / C;
+    const lamShift = lambda0 * (1 + z);
+    const dlam_pm  = (lamShift - lambda0) * 1e3;
+    const dnu_GHz  = -(nu0 * z) / 1e9;
+    out += `${v}${sep}${z}${sep}${lambda0}${sep}${lamShift}${sep}${dlam_pm}${sep}${dnu_GHz}\n`;
+  }
+  downloadText(`lambda_vs_v_${lambda0.toFixed(3)}nm.csv`, out);
+}
+
+function populateLineSelect() {
+  const prev = elLineSelect.value;
+  elLineSelect.innerHTML = "";
+  lines.forEach(L => {
+    const opt = document.createElement('option');
+    opt.value = String(L[1]);
+    opt.textContent = `${L[0] || ''} ${L[0] ? '— ' : ''}${Number(L[1]).toFixed(3)} nm`;
+    elLineSelect.appendChild(opt);
+  });
+  let target = prev;
+  if (!target) {
+    const zc = Number(elZoom.value);
+    let best = 0, bestd = Infinity;
+    lines.forEach((L, i) => {
+      const d = Math.abs(L[1] - zc);
+      if (d < bestd) { bestd = d; best = i; }
+    });
+    target = String(lines[best][1]);
+  }
+  elLineSelect.value = target;
+}
+
 // --- Events / Controls -------------------------------------------------------
 elFile.addEventListener('change', async (e)=>{
   const f = e.target.files[0];
@@ -410,6 +510,7 @@ elFile.addEventListener('change', async (e)=>{
     alert("Fehler beim Einlesen: " + err.message);
     return;
   }
+  populateLineSelect();
   update();
 });
 
@@ -437,19 +538,14 @@ document.getElementById('play').onclick = ()=>{
   }, 30);
 };
 
-// (4) Exporte
+// PNGs
 document.getElementById('png1').onclick = ()=> Plotly.downloadImage('g1', {format:'png', filename:'spectrum_full'});
 document.getElementById('png2').onclick = ()=> Plotly.downloadImage('g2', {format:'png', filename:'spectrum_zoom'});
-document.getElementById('csv').onclick  = ()=>{
-  let csv = 'lambda_nm,flux\n';
-  for (let i=0;i<x.length;i++) csv += `${x[i]},${y[i]}\n`;
-  const blob = new Blob([csv], {type:'text/csv'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'spectrum.csv';
-  a.click();
-  URL.revokeObjectURL(a.href);
-};
+
+// CSV-Buttons
+document.getElementById('csv').onclick     = exportSpectrumCSV;
+document.getElementById('csvZoom').onclick = exportZoomCSV;
+document.getElementById('csvLine').onclick = exportLineVsV_CSV;
 
 // Share-Link (mit Parametern)
 document.getElementById('share').onclick = ()=>{
@@ -464,7 +560,7 @@ document.getElementById('share').onclick = ()=>{
   navigator.clipboard.writeText(url).then(()=>alert('Link kopiert:\n'+url));
 };
 
-// URL-Parameter anwenden (optional QR mit Zuständen)
+// URL-Parameter anwenden
 (function applyParams(){
   const p = new URLSearchParams(window.location.search);
   if (p.has('v'))     elV.value = p.get('v');
@@ -480,9 +576,9 @@ document.getElementById('share').onclick = ()=>{
   if (p.has('prec'))  elPrec.value = p.get('prec');
 })();
 
-// Initial
+// Initial-Setup
+populateLineSelect();
 update();
 </script>
 </body>
 </html>
-
