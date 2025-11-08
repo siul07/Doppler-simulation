@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Dopplereffekt-Simulation - Luis Marshall</title>
   <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+  <!-- PDF-Export -->
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <style>
     :root { --fg:#111; --bg:#fff; --muted:#777; }
     body { font:16px/1.4 system-ui, Segoe UI, Roboto, Arial, sans-serif; color:var(--fg); background:#fff; margin:0; }
@@ -203,6 +205,13 @@
 
       <div class="inline" style="margin-top:8px">
         <div>
+          <label for="relativistic">Doppler-Modell</label>
+          <select id="relativistic">
+            <option value="classic" selected>klassisch (λ′ = λ·(1+v/c))</option>
+            <option value="rel">relativistisch (λ′ = λ·√((1+β)/(1−β)))</option>
+          </select>
+        </div>
+        <div>
           <label for="timeUnit">Zeitachse</label>
           <select id="timeUnit">
             <option value="s" selected>Sekunden</option>
@@ -218,6 +227,8 @@
         <button id="play">Play</button>
         <button id="png1">PNG Gesamt</button>
         <button id="png2">PNG Zoom</button>
+        <button id="pngAll">PNG alle Plots</button>
+        <button id="pdfReport">PDF-Report</button>
         <button id="share">Link kopieren</button>
       </div>
 
@@ -236,23 +247,21 @@
     </div>
   </div> <!-- Ende .row -->
 
-  <!-- Bild unten, volle Breite -->
-<!-- Bild unten, volle Breite (lokale Kopie) -->
-<figure style="margin-top:16px; max-width:1200px; margin-left:auto; margin-right:auto;">
-  <img
-    src="BahnelementeEllipse.svg"
-    alt="Bahnelemente einer elliptischen Bahn: a, e, i, ω, Ω, ν"
-    loading="lazy"
-    style="max-width:100%; height:auto; border:1px solid #eee; border-radius:8px; background:#fff"
-  >
-  <figcaption style="font-size:12px; color:#555; margin-top:6px">
-    Bahnelemente einer elliptischen Bahn. Quelle:
-    <a href="https://commons.wikimedia.org/wiki/User:Modalanalytiker" target="_blank" rel="noopener">Modalanalytiker</a> – Eigenes Werk,
-    <a href="https://creativecommons.org/licenses/by-sa/3.0" target="_blank" rel="noopener">CC BY-SA 3.0</a>,
-    <a href="https://commons.wikimedia.org/w/index.php?curid=33729773" target="_blank" rel="noopener">Link</a>.
-  </figcaption>
-</figure>
-
+  <!-- Bild unten, volle Breite (lokale Kopie) -->
+  <figure style="margin-top:16px; max-width:1200px; margin-left:auto; margin-right:auto;">
+    <img
+      src="BahnelementeEllipse.svg"
+      alt="Bahnelemente einer elliptischen Bahn: a, e, i, ω, Ω, ν"
+      loading="lazy"
+      style="max-width:100%; height:auto; border:1px solid #eee; border-radius:8px; background:#fff"
+    >
+    <figcaption style="font-size:12px; color:#555; margin-top:6px">
+      Bahnelemente einer elliptischen Bahn. Quelle:
+      <a href="https://commons.wikimedia.org/wiki/User:Modalanalytiker" target="_blank" rel="noopener">Modalanalytiker</a> – Eigenes Werk,
+      <a href="https://creativecommons.org/licenses/by-sa/3.0" target="_blank" rel="noopener">CC BY-SA 3.0</a>,
+      <a href="https://commons.wikimedia.org/w/index.php?curid=33729773" target="_blank" rel="noopener">Link</a>.
+    </figcaption>
+  </figure>
 </main>
 
 <footer>
@@ -317,6 +326,7 @@ const elOmega = document.getElementById('omega');
 const elM0    = document.getElementById('M0');
 const elOmegaNote = document.getElementById('omegaNote');
 
+const elRel = document.getElementById('relativistic');
 const elTimeUnit = document.getElementById('timeUnit');
 
 // Datenpuffer
@@ -366,13 +376,34 @@ function parseTab(text){
 }
 function colorForV(v){ return v<0?'blue':(v>0?'red':'black'); }
 function fwhmArray(lam_nm,mode,R,FWHM){ return (mode==='FWHM')?lam_nm.map(_=>FWHM):lam_nm.map(l=>l/Math.max(1,R)); }
-function synthSpectrum(x,lam_nm,amp,v_ms,mode,R,FWHM){
-  const lamShift=lam_nm.map(l=>l*(1+v_ms/C));
+
+// Doppler-Modelle
+function lambdaShift(l0, v, relMode){
+  const beta = v / C;
+  if (relMode === 'rel'){
+    const f = Math.sqrt((1+beta)/(1-beta));
+    return l0 * f;
+  }
+  return l0 * (1 + beta);
+}
+function freqShift(nu0, v, relMode){
+  const beta = v / C;
+  if (relMode === 'rel'){
+    const f = Math.sqrt((1-beta)/(1+beta));
+    return nu0 * f;
+  }
+  return nu0 * (1 - beta);
+}
+
+function synthSpectrum(x,lam_nm,amp,v_ms,mode,R,FWHM,relMode){
+  const lamShiftArr = lam_nm.map(l => lambdaShift(l, v_ms, relMode));
   const fwhm=fwhmArray(lam_nm,mode,R,FWHM);
   const sigma=fwhm.map(f=>f/(2*Math.sqrt(2*Math.log(2))));
   const yAbs=new Float64Array(x.length);
-  for(let k=0;k<lam_nm.length;k++){ const g=gauss(x,amp[k],lamShift[k],Math.max(sigma[k],1e-6));
-    for(let i=0;i<x.length;i++) yAbs[i]+=g[i]; }
+  for(let k=0;k<lam_nm.length;k++){
+    const g=gauss(x,amp[k],lamShiftArr[k],Math.max(sigma[k],1e-6));
+    for(let i=0;i<x.length;i++) yAbs[i]+=g[i];
+  }
   const out=new Float64Array(x.length);
   for(let i=0;i<x.length;i++) out[i]=Math.max(0,Math.min(1.1,1-yAbs[i]));
   return out;
@@ -426,7 +457,7 @@ function rv_kepler(t){
 
 // Orbit-Wrapper
 function currentVelocity(){
-  const mode = document.getElementById('orbitMode').value;
+  const mode = elOrbitMode.value;
   if (mode === 'off') return Number(elV.value);
   const vsys = Number(elV0.value);
   const P = Number(elT_days.value)*DAY;
@@ -440,7 +471,7 @@ function currentVelocity(){
 
 // Zeitachsen-Skalierung
 function timeScale() {
-  const u = document.getElementById('timeUnit').value;
+  const u = elTimeUnit.value;
   if (u === 's')   return { f: 1,      label: 'Zeit t [s]' };
   if (u === 'min') return { f: 1/60,   label: 'Zeit t [min]' };
   if (u === 'h')   return { f: 1/3600, label: 'Zeit t [h]' };
@@ -471,37 +502,43 @@ function update(){
   let npts=Math.max(20000,Number(elPrec.value)); npts=Math.min(npts,600000);
 
   const zc=Number(elZoom.value), dz=Number(elDz.value);
-  const colorByBottom=document.getElementById('colorBy').value;
+  const colorByBottom=elColorBy.value;
+  const relMode = elRel.value; // 'classic' | 'rel'
 
   if (x.length!==npts || x[0]!==xmin || x[x.length-1]!==xmax) x=Array.from(buildAxis(xmin, xmax, npts));
 
   const lam=lines.map(l=>l[1]), amp=lines.map(l=>l[2]);
-  y=Array.from(synthSpectrum(x, lam, amp, v, mode, R, FWHM));
+  y=Array.from(synthSpectrum(x, lam, amp, v, mode, R, FWHM, relMode));
 
   const xzMin=zc-dz, xzMax=zc+dz; let ix0=0, ix1=x.length-1;
   while (ix0<x.length && x[ix0]<xzMin) ix0++; ix1=ix0; while (ix1<x.length && x[ix1]<=xzMax) ix1++;
   xZoom=x.slice(ix0, ix1); yZoom=y.slice(ix0, ix1);
 
-  drawSpectra(v, colorByBottom);
-  drawTimeSeries();
+  drawSpectra(v, colorByBottom, relMode);
+  drawTimeSeries(relMode);
 
   elMeta.textContent = `Datei: ${currentFileLabel} | Linien: ${lines.length} | ${mode==='R'?'R≈'+R:'FWHM≈'+FWHM+' nm'} | Punkte: ${npts}`;
 
-  const z=v/C, dlam_pm=(zc*(1+v/C)-zc)*1e3, nu0=C/(zc*NM), dnu_GHz=-(nu0*v/C)/1e9;
-  elInfo.textContent = `z = ${z.toFixed(6)} • Δλ = ${dlam_pm>=0?'+':''}${dlam_pm.toFixed(3)} pm • Δν = ${dnu_GHz>=0?'+':''}${dnu_GHz.toFixed(3)} GHz`;
+  const lamObs = lambdaShift(zc, v, relMode);
+  const dlam_pm = (lamObs - zc)*1e3;
+  const nu0=C/(zc*NM);
+  const nuObs = freqShift(nu0, v, relMode);
+  const dnu_GHz = (nuObs - nu0)/1e9;
+  const beta = v/C;
+  elInfo.textContent = `z = ${beta.toFixed(6)} • Δλ = ${dlam_pm>=0?'+':''}${dlam_pm.toFixed(3)} pm • Δν = ${dnu_GHz>=0?'+':''}${dnu_GHz.toFixed(3)} GHz`;
 }
 
-function buildLineMarkers(v, modeTop, colorByBottom){
+function buildLineMarkers(v, modeTop, colorByBottom, relMode){
   const shapes=[], ann=[];
   for(const [nm,l0,A] of lines){
     const yTop=1.0, yBot=Math.max(0,1.0-A);
     const restColor=modeTop ? wavelengthToRGB(l0) : '#bfbfbf';
-    const shiftColor=modeTop ? wavelengthToRGB(l0*(1+v/C)) : (colorByBottom==='velocity'?colorForV(v):'#000');
+    const lShift = lambdaShift(l0, v, relMode);
+    const shiftColor=modeTop ? wavelengthToRGB(lShift) : (colorByBottom==='velocity'?colorForV(v):'#000');
     shapes.push({type:'line',x0:l0,x1:l0,y0:yBot,y1:yTop,line:{color:restColor,width:1,dash:modeTop?'solid':'dot'}});
     ann.push({x:l0,y:yBot,text:`${nm}`,showarrow:false,yanchor:'top',font:{size:10,color:'#555'},bgcolor:'#fff',opacity:.9,bordercolor:'#e6e6e6',borderwidth:1});
-    const ls=l0*(1+v/C);
-    shapes.push({type:'line',x0:ls,x1:ls,y0:yBot,y1:yTop,line:{color:shiftColor,width:1.6}});
-    ann.push({x:ls,y:yBot,text:`${nm}\u2032`,showarrow:false,yanchor:'top',font:{size:10,color:shiftColor},bgcolor:'#fff',opacity:.9,bordercolor:'#e6e6e6',borderwidth:1});
+    shapes.push({type:'line',x0:lShift,x1:lShift,y0:yBot,y1:yTop,line:{color:shiftColor,width:1.6}});
+    ann.push({x:lShift,y:yBot,text:`${nm}\u2032`,showarrow:false,yanchor:'top',font:{size:10,color:shiftColor},bgcolor:'#fff',opacity:.9,bordercolor:'#e6e6e6',borderwidth:1});
   }
   return {shapes, ann};
 }
@@ -512,16 +549,19 @@ function tracesColorByWavelength(xs,ys){
     hovertemplate:'λ %{x:.3f} nm<br>Flux %{y:.3f}<extra></extra>', showlegend:false
   }));
 }
-function drawSpectra(v, colorByBottom){
+function drawSpectra(v, colorByBottom, relMode){
+  // oben
   const topTraces=tracesColorByWavelength(x,y);
-  const {shapes:topShapes, ann:topAnn}=buildLineMarkers(v,true,colorByBottom);
+  const {shapes:topShapes, ann:topAnn}=buildLineMarkers(v,true,colorByBottom,relMode);
   const layout1={margin:{l:55,r:15,t:32,b:45},xaxis:{title:'Wellenlänge λ [nm]',range:[x[0],x[x.length-1]]},yaxis:{title:'Flux',range:[0,1.05]},shapes:topShapes,annotations:topAnn,title:{text:'Doppler-Verschiebung – Gesamtspektrum',font:{size:16}}};
   Plotly.react('g1', topTraces, layout1, {displayModeBar:false});
 
+  // unten
   const baseColorBottom=(colorByBottom==='velocity')?colorForV(v):'black';
   const bottomTraces=[{x:xZoom,y:yZoom,mode:'lines',line:{width:1.4,color:baseColorBottom},hovertemplate:'λ %{x:.4f} nm<br>Flux %{y:.3f}<extra></extra>'}];
-  const {shapes:botShapes, ann:botAnn}=buildLineMarkers(v,false,colorByBottom);
-  const lamShift=Number(elZoom.value)*(1+Number(elV.value)/C); const dpm=(lamShift-Number(elZoom.value))*1e3;
+  const {shapes:botShapes, ann:botAnn}=buildLineMarkers(v,false,colorByBottom,relMode);
+  const lamShiftVal = lambdaShift(Number(elZoom.value), Number(elV.value), relMode);
+  const dpm=(lamShiftVal-Number(elZoom.value))*1e3;
   const layout2={margin:{l:55,r:15,t:32,b:45},xaxis:{title:'λ [nm] (Zoom)',range:[xZoom[0],xZoom[xZoom.length-1]]},yaxis:{title:'Flux',range:[0,1.05]},shapes:botShapes,annotations:[...botAnn,{x:.98,y:.98,xref:'paper',yref:'paper',text:`Δλ @ ${Number(elZoom.value).toFixed(3)} nm: ${dpm>=0?'+':''}${dpm.toFixed(3)} pm`,showarrow:false,bgcolor:'#fff',bordercolor:'#ddd',borderwidth:1,opacity:.9}],title:{text:`Zoom um ${Number(elZoom.value).toFixed(3)} nm`,font:{size:16}}};
   Plotly.react('g2', bottomTraces, layout2, {displayModeBar:false});
 }
@@ -535,11 +575,13 @@ function timeScale() {
   return { f: 1/YEAR, label: 'Zeit t [yr]' };
 }
 
-function drawTimeSeries(){
+function drawTimeSeries(relMode){
   const vmax = Math.max(1, Number(elVmax.value));
   const zc   = Number(elZoom.value);
   const y1min=-vmax, y1max=vmax;
-  const dlamMax = zc * (vmax/C) * 1e3; // pm
+  // Maximale |Δλ| anhand vmax
+  const lamMaxShift = lambdaShift(zc, vmax, relMode);
+  const dlamMax = Math.max(Math.abs(lamMaxShift - zc), Math.abs(lambdaShift(zc, -vmax, relMode) - zc)) * 1e3; // pm
   const y2min=-dlamMax, y2max=dlamMax;
 
   const P = Math.max(0.01, Number(elT_days.value))*DAY;
@@ -554,7 +596,7 @@ function drawTimeSeries(){
     const v = currentVelocity();
     t = oldT;
     vs[i]=v;
-    dls[i]=(zc*(1+v/C)-zc)*1e3;
+    dls[i]=(lambdaShift(zc, v, relMode)-zc)*1e3;
   }
 
   const { f, label } = timeScale();
@@ -576,6 +618,93 @@ function drawTimeSeries(){
   Plotly.react('g3', [traceV, traceDl], layout, {displayModeBar:false});
 }
 
+// --- Export (PNG & PDF) ---
+async function exportAllPNGs(){
+  await Plotly.downloadImage('g1',{format:'png',filename:'spectrum_full'});
+  await Plotly.downloadImage('g2',{format:'png',filename:'spectrum_zoom'});
+  await Plotly.downloadImage('g3',{format:'png',filename:'rv_timeseries'});
+}
+
+function collectParams(){
+  return {
+    Datei: currentFileLabel,
+    Linien: lines.length,
+    Mode: elMode.value,
+    R: elR.value,
+    FWHM: elFWHM.value,
+    xmin: elXmin.value, xmax: elXmax.value,
+    zoom: elZoom.value, dz: elDz.value,
+    colorBy: elColorBy.value,
+    prec: elPrec.value,
+    orbitMode: elOrbitMode.value,
+    T_days: elT_days.value, A_sin: elA_sin.value, v0: elV0.value, phi0: elPhi0.value,
+    Mstar: elMstar.value, Mpl: elMpl.value, inc: elInc.value, ecc: elEcc.value, omega: elOmega.value, M0: elM0.value,
+    relativistic: elRel.value,
+    vmax: elVmax.value, timeUnit: elTimeUnit.value
+  };
+}
+function paramsToLines(obj){
+  const nice = {
+    Datei:'Datei', Linien:'Linien', Mode:'Breiten-Modus', R:'R', FWHM:'FWHM [nm]',
+    xmin:'xmin [nm]', xmax:'xmax [nm]', zoom:'Zoom [nm]', dz:'±Zoom [nm]',
+    colorBy:'Farbe unten', prec:'Punkte',
+    orbitMode:'Orbit', T_days:'P [Tage]', A_sin:'A [m/s]', v0:'Vsys [m/s]', phi0:'φ0 [rad]',
+    Mstar:'M⋆ [M☉]', Mpl:'mp [M_Jup]', inc:'i [°]', ecc:'e', omega:'ω [°]', M0:'M0 [rad]',
+    relativistic:'Doppler', vmax:'vmax [m/s]', timeUnit:'Zeitachse'
+  };
+  const out=[];
+  for (const k of Object.keys(obj)){
+    out.push(`${nice[k]||k}: ${obj[k]}`);
+  }
+  return out;
+}
+async function exportPDF(){
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({unit:'pt', format:'a4'}); // 595 x 842 pt
+  const margin = 36;
+  let y = margin;
+
+  // Titel + Timestamp
+  doc.setFont('helvetica','bold'); doc.setFontSize(16);
+  doc.text('Doppler-/RV-Report', margin, y); y += 22;
+  doc.setFont('helvetica','normal'); doc.setFontSize(10);
+  const ts = new Date().toLocaleString();
+  doc.text(`Erstellt: ${ts}`, margin, y); y += 16;
+
+  // Parameterliste
+  const linesTxt = paramsToLines(collectParams());
+  const maxWidth = 595 - 2*margin;
+  for (const line of linesTxt){
+    const chunks = doc.splitTextToSize(line, maxWidth);
+    doc.text(chunks, margin, y);
+    y += 14 + (chunks.length-1)*12;
+    if (y > 780) { doc.addPage(); y = margin; }
+  }
+
+  // Plots in brauchbarer Größe rendern
+  const wPlot = 520, hPlot = 280;
+  const img1 = await Plotly.toImage('g1', {format:'png', width:wPlot, height:hPlot});
+  const img2 = await Plotly.toImage('g2', {format:'png', width:wPlot, height:hPlot});
+  const img3 = await Plotly.toImage('g3', {format:'png', width:wPlot, height:hPlot});
+
+  // Neue Seite für Abbildungen
+  doc.addPage(); y = margin;
+  doc.setFont('helvetica','bold'); doc.setFontSize(12);
+  doc.text('Abbildungen', margin, y); y += 10;
+  doc.setFont('helvetica','normal');
+
+  // Bild 1
+  y += 8; doc.addImage(img1, 'PNG', margin, y, wPlot, hPlot); y += hPlot + 16;
+  // Bild 2
+  if (y + hPlot > 842 - margin) { doc.addPage(); y = margin; }
+  doc.addImage(img2, 'PNG', margin, y, wPlot, hPlot); y += hPlot + 16;
+  // Bild 3
+  if (y + hPlot > 842 - margin) { doc.addPage(); y = margin; }
+  doc.addImage(img3, 'PNG', margin, y, wPlot, hPlot);
+
+  doc.save('doppler_rv_report.pdf');
+}
+
 // --- Events ---
 elFile.addEventListener('change', async e=>{
   const f=e.target.files[0]; if(!f) return; currentFileLabel=f.name;
@@ -588,7 +717,7 @@ elFile.addEventListener('change', async e=>{
 [
   elV, elVmax, elR, elFWHM, elXmin, elXmax, elZoom, elDz, elColorBy, elPrec,
   elOrbitMode, elT_days, elA_sin, elV0, elPhi0, elMstar, elMpl, elInc, elEcc, elOmega, elM0,
-  elTimeUnit
+  elTimeUnit, elRel
 ].forEach(el=>el.addEventListener('input', update));
 
 elMode.addEventListener('change', ()=>{
@@ -598,14 +727,14 @@ elMode.addEventListener('change', ()=>{
   update();
 });
 
-document.getElementById('centerZoom').addEventListener('click', ()=>{ elZoom.value=document.getElementById('presetLine').value; update(); });
-document.getElementById('presetLine').addEventListener('change', ()=>{ elZoom.value=document.getElementById('presetLine').value; update(); });
+document.getElementById('centerZoom').addEventListener('click', ()=>{ elZoom.value=elPreset.value; update(); });
+elPreset.addEventListener('change', ()=>{ elZoom.value=elPreset.value; update(); });
 
 document.getElementById('play').onclick=()=>{
   if(timer){ clearInterval(timer); timer=null; return; }
   timer=setInterval(()=>{
     t += dt;
-    if (document.getElementById('orbitMode').value==='off'){
+    if (elOrbitMode.value==='off'){
       const vmax=Number(elVmax.value);
       let v=Number(elV.value)+dir*5;
       if(v> vmax){ v=vmax; dir=-1; }
@@ -618,6 +747,8 @@ document.getElementById('play').onclick=()=>{
 
 document.getElementById('png1').onclick=()=>Plotly.downloadImage('g1',{format:'png',filename:'spectrum_full'});
 document.getElementById('png2').onclick=()=>Plotly.downloadImage('g2',{format:'png',filename:'spectrum_zoom'});
+document.getElementById('pngAll').onclick=exportAllPNGs;
+document.getElementById('pdfReport').onclick=exportPDF;
 
 document.getElementById('share').onclick=()=>{
   const p=new URLSearchParams({
@@ -627,7 +758,7 @@ document.getElementById('share').onclick=()=>{
     colorBy:elColorBy.value, prec:elPrec.value,
     orbitMode:elOrbitMode.value, T_days:elT_days.value, A_sin:elA_sin.value, v0:elV0.value, phi0:elPhi0.value,
     Mstar:elMstar.value, Mpl:elMpl.value, inc:elInc.value, ecc:elEcc.value, omega:elOmega.value, M0:elM0.value,
-    timeUnit:elTimeUnit.value
+    timeUnit:elTimeUnit.value, relativistic:elRel.value
   });
   const url=`${location.origin}${location.pathname}?${p.toString()}`;
   navigator.clipboard.writeText(url).then(()=>alert('Link kopiert:\n'+url));
@@ -641,7 +772,7 @@ document.getElementById('share').onclick=()=>{
   set(elXmin,'xmin'); set(elXmax,'xmax'); set(elZoom,'zoom'); set(elDz,'dz'); set(elColorBy,'colorBy'); set(elPrec,'prec');
   set(elOrbitMode,'orbitMode'); set(elT_days,'T_days'); set(elA_sin,'A_sin'); set(elV0,'v0'); set(elPhi0,'phi0');
   set(elMstar,'Mstar'); set(elMpl,'Mpl'); set(elInc,'inc'); set(elEcc,'ecc'); set(elOmega,'omega'); set(elM0,'M0');
-  set(elTimeUnit,'timeUnit');
+  set(elTimeUnit,'timeUnit'); set(elRel,'relativistic');
   if (p.has('mode')) elMode.dispatchEvent(new Event('change'));
 })();
 populatePresetMenu();
@@ -649,4 +780,3 @@ update();
 </script>
 </body>
 </html>
-
