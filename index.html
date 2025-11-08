@@ -29,6 +29,10 @@
     .btnrow button { cursor:pointer; background:#f7f7f7; }
     .info { font-size:12px; color:#333; background:#fafafa; border:1px solid #eee; border-radius:8px; padding:8px; margin-top:8px; }
     .section-title { font-weight:600; margin-top:10px; }
+    details { border:1px dashed #e5e7eb; border-radius:8px; padding:8px 10px; background:#fcfcff; }
+    details > summary { cursor:pointer; font-weight:600; color:#334155; margin:-8px -10px 8px; padding:8px 10px; }
+    .note { font-size:12px; color:#555; margin-bottom:8px; }
+    .disabled-note { font-size:12px; color:#999; }
   </style>
 </head>
 <body>
@@ -67,7 +71,8 @@
         </div>
         <div id="wrapR">
           <label for="R">Wert</label>
-          <input id="R" type="number" value="70000" min="1000" step="1000" />
+          <!-- Standardwert jetzt 20000 -->
+          <input id="R" type="number" value="20000" min="1000" step="1000" />
         </div>
         <div id="wrapFWHM" style="display:none">
           <label for="FWHM">Wert</label>
@@ -153,7 +158,7 @@
         </div>
       </div>
 
-      <div class="section-title">Kepler-Parameter</div>
+      <div class="section-title">Kepler-Parameter (Standard)</div>
       <div class="inline">
         <div>
           <label for="Mstar">M<sub>⋆</sub> [M☉]</label>
@@ -173,15 +178,26 @@
           <label for="ecc">Exzentrizität e</label>
           <input id="ecc" type="number" value="0.2" step="0.01" min="0" max="0.99" />
         </div>
-        <div>
-          <label for="omega">Argument d. Periastron ω [°]</label>
-          <input id="omega" type="number" value="0" step="1" />
-        </div>
-        <div>
-          <label for="M0">Mittelanomalie M₀ @ t=0 [rad]</label>
-          <input id="M0" type="number" value="0" step="0.1" />
-        </div>
       </div>
+
+      <!-- Erweitert: ω und M0 -->
+      <details id="advBox" style="margin-top:8px">
+        <summary>Erweitert: Argument des Periastrons ω &amp; Mittelanomalie M₀</summary>
+        <div class="note">
+          ω beeinflusst die Form der RV-Kurve nur bei <b>e &gt; 0</b>. Für <b>e = 0</b> ist ω physikalisch beliebig
+          (wird unten automatisch deaktiviert). M₀ setzt die Orbitalphase zum Startzeitpunkt (immer sinnvoll).
+        </div>
+        <div class="inline">
+          <div>
+            <label for="omega">Argument d. Periastron ω [°] <span id="omegaNote" class="disabled-note"></span></label>
+            <input id="omega" type="number" value="0" step="1" />
+          </div>
+          <div>
+            <label for="M0">Mittelanomalie M₀ @ t=0 [rad]</label>
+            <input id="M0" type="number" value="0" step="0.1" />
+          </div>
+        </div>
+      </details>
 
       <div class="inline" style="margin-top:8px">
         <div>
@@ -277,6 +293,7 @@ const elInc   = document.getElementById('inc');
 const elEcc   = document.getElementById('ecc');
 const elOmega = document.getElementById('omega');
 const elM0    = document.getElementById('M0');
+const elOmegaNote = document.getElementById('omegaNote');
 
 const elTimeUnit = document.getElementById('timeUnit');
 
@@ -387,7 +404,7 @@ function rv_kepler(t){
 
 // Orbit-Wrapper
 function currentVelocity(){
-  const mode = elOrbitMode.value;
+  const mode = document.getElementById('orbitMode').value;
   if (mode === 'off') return Number(elV.value);
   const vsys = Number(elV0.value);
   const P = Number(elT_days.value)*DAY;
@@ -401,16 +418,26 @@ function currentVelocity(){
 
 // Zeitachsen-Skalierung
 function timeScale() {
-  const u = elTimeUnit.value;
-  if (u === 's')   return { f: 1,             label: 'Zeit t [s]'   };
-  if (u === 'min') return { f: 1/60,          label: 'Zeit t [min]' };
-  if (u === 'h')   return { f: 1/3600,        label: 'Zeit t [h]'   };
-  if (u === 'd')   return { f: 1/DAY,         label: 'Zeit t [d]'   };
-  return { f: 1/YEAR, label: 'Zeit t [yr]' }; // 'y'
+  const u = document.getElementById('timeUnit').value;
+  if (u === 's')   return { f: 1,      label: 'Zeit t [s]' };
+  if (u === 'min') return { f: 1/60,   label: 'Zeit t [min]' };
+  if (u === 'h')   return { f: 1/3600, label: 'Zeit t [h]' };
+  if (u === 'd')   return { f: 1/DAY,  label: 'Zeit t [d]' };
+  return { f: 1/YEAR, label: 'Zeit t [yr]' };
+}
+
+// ω deaktivieren, falls e=0
+function updateOmegaEnable() {
+  const e = Number(elEcc.value);
+  const disable = (Math.abs(e) < 1e-12);
+  elOmega.disabled = disable;
+  elOmegaNote.textContent = disable ? ' (bei e=0 irrelevant)' : '';
 }
 
 // --- Update/Draw ---
 function update(){
+  updateOmegaEnable();
+
   const vmax=Number(elVmax.value); elV.max=vmax; elV.min=-vmax;
 
   const v = clamp(currentVelocity(), -vmax, vmax);
@@ -422,7 +449,7 @@ function update(){
   let npts=Math.max(20000,Number(elPrec.value)); npts=Math.min(npts,600000);
 
   const zc=Number(elZoom.value), dz=Number(elDz.value);
-  const colorByBottom=elColorBy.value;
+  const colorByBottom=document.getElementById('colorBy').value;
 
   if (x.length!==npts || x[0]!==xmin || x[x.length-1]!==xmax) x=Array.from(buildAxis(xmin, xmax, npts));
 
@@ -499,11 +526,10 @@ function drawTimeSeries(){
     dls[i]=(zc*(1+v/C)-zc)*1e3;
   }
 
-  // Zeit-Skalierung nur für die Achse/Annotation
   const { f, label } = timeScale();
   const xPlot = Array.from(ts, s => s * f);
   const xNow  = t * f;
-  const xStart = tStart * f, xEnd = tEnd * f;
+  const xStart = (tStart) * f, xEnd = (tEnd) * f;
 
   const traceV  = {x:xPlot, y:Array.from(vs), name:'v(t) [m/s]', mode:'lines', line:{width:1.6}};
   const traceDl = {x:xPlot, y:Array.from(dls), name:'Δλ(t) [pm]', mode:'lines', line:{width:1.2, dash:'dot'}, yaxis:'y2'};
@@ -548,7 +574,7 @@ document.getElementById('play').onclick=()=>{
   if(timer){ clearInterval(timer); timer=null; return; }
   timer=setInterval(()=>{
     t += dt;
-    if (elOrbitMode.value==='off'){
+    if (document.getElementById('orbitMode').value==='off'){
       const vmax=Number(elVmax.value);
       let v=Number(elV.value)+dir*5;
       if(v> vmax){ v=vmax; dir=-1; }
@@ -587,8 +613,6 @@ document.getElementById('share').onclick=()=>{
   set(elTimeUnit,'timeUnit');
   if (p.has('mode')) elMode.dispatchEvent(new Event('change'));
 })();
-
-// Init
 populatePresetMenu();
 update();
 </script>
