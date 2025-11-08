@@ -40,8 +40,10 @@
   <h1>Dopplereffekt-Simulation - Luis Marshall <span class="pill">client-side</span></h1>
   <div class="muted">Interaktive Rot/Blauverschiebung von Spektrallinien (Kepler-RV möglich)</div>
 </header>
+
 <main>
   <div class="row">
+    <!-- Linkes Panel -->
     <div class="card" style="max-width:460px">
       <label for="file">Linientabelle (.tab, whitespace-getrennt: Name λ[nm] Amp)</label>
       <input id="file" type="file" accept=".tab,.txt" />
@@ -71,7 +73,7 @@
         </div>
         <div id="wrapR">
           <label for="R">Wert</label>
-          <!-- Standardwert jetzt 20000 -->
+          <!-- Default R = 20000 -->
           <input id="R" type="number" value="20000" min="1000" step="1000" />
         </div>
         <div id="wrapFWHM" style="display:none">
@@ -180,12 +182,12 @@
         </div>
       </div>
 
-      <!-- Erweitert: ω und M0 -->
+      <!-- Erweitert -->
       <details id="advBox" style="margin-top:8px">
         <summary>Erweitert: Argument des Periastrons ω &amp; Mittelanomalie M₀</summary>
         <div class="note">
-          ω beeinflusst die Form der RV-Kurve nur bei <b>e &gt; 0</b>. Für <b>e = 0</b> ist ω physikalisch beliebig
-          (wird unten automatisch deaktiviert). M₀ setzt die Orbitalphase zum Startzeitpunkt (immer sinnvoll).
+          ω beeinflusst die Form der RV-Kurve nur bei <b>e &gt; 0</b>. Für <b>e = 0</b> ist ω beliebig (automatisch deaktiviert).
+          M₀ setzt die Orbitalphase zum Startzeitpunkt (immer sinnvoll).
         </div>
         <div class="inline">
           <div>
@@ -198,31 +200,6 @@
           </div>
         </div>
       </details>
-      </div>
-    </details>
-
-    <!-- Orbit-Erklärung: Bahnelemente -->
-    <figure style="margin-top:10px">
-      <img
-        src="https://upload.wikimedia.org/wikipedia/commons/1/1b/BahnelementeEllipse.svg"
-        alt="Bahnelemente einer elliptischen Bahn: a, e, i, ω, Ω, ν"
-        loading="lazy"
-        style="max-width:100%;height:auto;border:1px solid #eee;border-radius:8px;background:#fff"
-      >
-      <figcaption style="font-size:12px;color:#555;margin-top:6px">
-        Bahnelemente einer elliptischen Bahn. Quelle:
-        <a href="//commons.wikimedia.org/wiki/User:Modalanalytiker" target="_blank" rel="noopener">Modalanalytiker</a> – Eigenes Werk,
-        <a href="https://creativecommons.org/licenses/by-sa/3.0" target="_blank" rel="noopener">CC BY-SA 3.0</a>,
-        <a href="https://commons.wikimedia.org/w/index.php?curid=33729773" target="_blank" rel="noopener">Link</a>.
-      </figcaption>
-    </figure>
-
-    <div class="btnrow">
-      <button id="play">Play</button>
-      <button id="png1">PNG Gesamt</button>
-      <button id="png2">PNG Zoom</button>
-      <button id="share">Link kopieren</button>
-    </div>
 
       <div class="inline" style="margin-top:8px">
         <div>
@@ -249,6 +226,7 @@
       <div class="muted" id="meta">Datei: – | Linien: –</div>
     </div>
 
+    <!-- Rechtes Panel (Plots) -->
     <div class="card" style="flex:2 1 680px">
       <div class="plots">
         <div id="g1"></div>
@@ -256,8 +234,25 @@
         <div id="g3"></div>
       </div>
     </div>
-  </div>
+  </div> <!-- Ende .row -->
+
+  <!-- Bild unten, volle Breite -->
+  <figure style="margin-top:16px; max-width:1200px; margin-left:auto; margin-right:auto;">
+    <img
+      src="https://upload.wikimedia.org/wikipedia/commons/1/1b/BahnelementeEllipse.svg"
+      alt="Bahnelemente einer elliptischen Bahn: a, e, i, ω, Ω, ν"
+      loading="lazy"
+      style="max-width:100%; height:auto; border:1px solid #eee; border-radius:8px; background:#fff"
+    >
+    <figcaption style="font-size:12px; color:#555; margin-top:6px">
+      Bahnelemente einer elliptischen Bahn. Quelle:
+      <a href="https://commons.wikimedia.org/wiki/User:Modalanalytiker" target="_blank" rel="noopener">Modalanalytiker</a> – Eigenes Werk,
+      <a href="https://creativecommons.org/licenses/by-sa/3.0" target="_blank" rel="noopener">CC BY-SA 3.0</a>,
+      <a href="https://commons.wikimedia.org/w/index.php?curid=33729773" target="_blank" rel="noopener">Link</a>.
+    </figcaption>
+  </figure>
 </main>
+
 <footer>
   <div class="hint">Hinweis: Läuft vollständig im Browser. Du kannst die Seite offline speichern oder via GitHub Pages hosten.</div>
 </footer>
@@ -529,6 +524,15 @@ function drawSpectra(v, colorByBottom){
   Plotly.react('g2', bottomTraces, layout2, {displayModeBar:false});
 }
 
+function timeScale() {
+  const u = elTimeUnit.value;
+  if (u === 's')   return { f: 1,      label: 'Zeit t [s]' };
+  if (u === 'min') return { f: 1/60,   label: 'Zeit t [min]' };
+  if (u === 'h')   return { f: 1/3600, label: 'Zeit t [h]' };
+  if (u === 'd')   return { f: 1/DAY,  label: 'Zeit t [d]' };
+  return { f: 1/YEAR, label: 'Zeit t [yr]' };
+}
+
 function drawTimeSeries(){
   const vmax = Math.max(1, Number(elVmax.value));
   const zc   = Number(elZoom.value);
@@ -643,4 +647,3 @@ update();
 </script>
 </body>
 </html>
-
