@@ -35,6 +35,7 @@
     details > summary { cursor:pointer; font-weight:600; color:#334155; margin:-8px -10px 8px; padding:8px 10px; }
     .note { font-size:12px; color:#555; margin-bottom:8px; }
     .disabled-note { font-size:12px; color:#999; }
+    .tiny { font-size:11px; color:#555; margin-top:4px; }
   </style>
 </head>
 <body>
@@ -62,6 +63,7 @@
         <div>
           <label for="vmax">v<sub>max</sub> [m/s] (Skalierung)</label>
           <input id="vmax" type="number" value="1000" step="50" />
+          <div class="tiny"><button id="demoRel" type="button">Demo: v = 0.05 c setzen</button></div>
         </div>
       </div>
 
@@ -210,6 +212,7 @@
             <option value="classic" selected>klassisch (λ′ = λ·(1+v/c))</option>
             <option value="rel">relativistisch (λ′ = λ·√((1+β)/(1−β)))</option>
           </select>
+          <div class="tiny" id="relNote">Tipp: Für sichtbare Unterschiede v ≳ 0.01 c verwenden (siehe Demo).</div>
         </div>
         <div>
           <label for="timeUnit">Zeitachse</label>
@@ -232,7 +235,10 @@
         <button id="share">Link kopieren</button>
       </div>
 
-      <div class="info" id="infobox">z = 0.000000 • Δλ = 0.000 pm • Δν = 0.000 GHz</div>
+      <div class="info" id="infobox">
+        z = 0.000000 · Δλ = 0.000 pm · Δν = 0.000 GHz<br>
+        <span id="relDiff" class="muted">Relativistik-Effekt @ Zoom: Δλ(rel−klass) = 0.000 pm (0.0 ppm)</span>
+      </div>
       <hr />
       <div class="muted" id="meta">Datei: – | Linien: –</div>
     </div>
@@ -251,7 +257,7 @@
   <figure style="margin-top:16px; max-width:1200px; margin-left:auto; margin-right:auto;">
     <img
       src="BahnelementeEllipse.svg"
-      alt="Bahnelemente einer elliptischen Bahn: a, e, i, ω, Ω, ν"
+      alt="Bahnelemente einer elliptischen Bahn: a, e, i, omega, Omega, nu"
       loading="lazy"
       style="max-width:100%; height:auto; border:1px solid #eee; border-radius:8px; background:#fff"
     >
@@ -311,6 +317,7 @@ const elPrec   = document.getElementById('prec');
 const elMeta   = document.getElementById('meta');
 const elInfo   = document.getElementById('infobox');
 const elPreset = document.getElementById('presetLine');
+const elRelDiff= document.getElementById('relDiff');
 
 const elOrbitMode = document.getElementById('orbitMode');
 const elT_days = document.getElementById('T_days');
@@ -328,6 +335,7 @@ const elOmegaNote = document.getElementById('omegaNote');
 
 const elRel = document.getElementById('relativistic');
 const elTimeUnit = document.getElementById('timeUnit');
+const elDemoRel = document.getElementById('demoRel');
 
 // Datenpuffer
 let x=[], y=[], xZoom=[], yZoom=[];
@@ -395,6 +403,7 @@ function freqShift(nu0, v, relMode){
   return nu0 * (1 - beta);
 }
 
+// Synthese
 function synthSpectrum(x,lam_nm,amp,v_ms,mode,R,FWHM,relMode){
   const lamShiftArr = lam_nm.map(l => lambdaShift(l, v_ms, relMode));
   const fwhm=fwhmArray(lam_nm,mode,R,FWHM);
@@ -487,6 +496,15 @@ function updateOmegaEnable() {
   elOmegaNote.textContent = disable ? ' (bei e=0 irrelevant)' : '';
 }
 
+// Relativistik-Anzeige: Differenz rel−klass in pm / ppm
+function updateRelNote(v, lam0){
+  const lamRel = lambdaShift(lam0, v, 'rel');
+  const lamCls = lambdaShift(lam0, v, 'classic');
+  const dpm = (lamRel - lamCls) * 1e3;
+  const ppm = ((lamRel/lamCls) - 1) * 1e6;
+  elRelDiff.textContent = `Relativistik-Effekt @ Zoom: Δλ(rel−klass) = ${dpm>=0?'+':''}${dpm.toFixed(3)} pm (${ppm.toFixed(2)} ppm)`;
+}
+
 // --- Update/Draw ---
 function update(){
   updateOmegaEnable();
@@ -525,7 +543,8 @@ function update(){
   const nuObs = freqShift(nu0, v, relMode);
   const dnu_GHz = (nuObs - nu0)/1e9;
   const beta = v/C;
-  elInfo.textContent = `z = ${beta.toFixed(6)} • Δλ = ${dlam_pm>=0?'+':''}${dlam_pm.toFixed(3)} pm • Δν = ${dnu_GHz>=0?'+':''}${dnu_GHz.toFixed(3)} GHz`;
+  elInfo.innerHTML = `z = ${beta.toFixed(6)} · Δλ = ${dlam_pm>=0?'+':''}${dlam_pm.toFixed(3)} pm · Δν = ${dnu_GHz>=0?'+':''}${dnu_GHz.toFixed(3)} GHz<br><span id="relDiff" class="muted"></span>`;
+  updateRelNote(v, zc);
 }
 
 function buildLineMarkers(v, modeTop, colorByBottom, relMode){
@@ -579,9 +598,11 @@ function drawTimeSeries(relMode){
   const vmax = Math.max(1, Number(elVmax.value));
   const zc   = Number(elZoom.value);
   const y1min=-vmax, y1max=vmax;
-  // Maximale |Δλ| anhand vmax
-  const lamMaxShift = lambdaShift(zc, vmax, relMode);
-  const dlamMax = Math.max(Math.abs(lamMaxShift - zc), Math.abs(lambdaShift(zc, -vmax, relMode) - zc)) * 1e3; // pm
+
+  // Symmetrische Δλ-Skala mit relat./klass. Formel
+  const lamPlus = lambdaShift(zc,  vmax, relMode);
+  const lamMinus= lambdaShift(zc, -vmax, relMode);
+  const dlamMax = Math.max(Math.abs(lamPlus - zc), Math.abs(lamMinus - zc)) * 1e3; // pm
   const y2min=-dlamMax, y2max=dlamMax;
 
   const P = Math.max(0.01, Number(elT_days.value))*DAY;
@@ -625,6 +646,35 @@ async function exportAllPNGs(){
   await Plotly.downloadImage('g3',{format:'png',filename:'rv_timeseries'});
 }
 
+// ASCII-Labels für PDF (jsPDF Standardfont ist nicht Unicode-fähig)
+function asciiLabelMap(k){
+  const map = {
+    Datei:'Datei', Linien:'Linien', Mode:'Breiten-Modus',
+    R:'R', 'FWHM':'FWHM [nm]',
+    xmin:'xmin [nm]', xmax:'xmax [nm]', zoom:'Zoom [nm]', dz:'±Zoom [nm]',
+    colorBy:'Farbe unten', prec:'Punkte',
+    orbitMode:'Orbit', T_days:'P [Tage]', A_sin:'A [m/s]', v0:'Vsys [m/s]', phi0:'phi0 [rad]',
+    Mstar:'Mstar [M_sun]', Mpl:'mp [M_Jup]', inc:'i [deg]', ecc:'e', omega:'omega [deg]', M0:'M0 [rad]',
+    relativistic:'Doppler', vmax:'vmax [m/s]', timeUnit:'Zeitachse'
+  };
+  return map[k] || k;
+}
+function asciiSanitize(s){
+  // ersetze problematische Unicode-Zeichen
+  return String(s)
+    .replaceAll('⋆','star')
+    .replaceAll('°','deg')
+    .replaceAll('φ','phi')
+    .replaceAll('ω','omega')
+    .replaceAll('Ω','Omega')
+    .replaceAll('ν','nu')
+    .replaceAll('λ','lambda')
+    .replaceAll('·','.')
+    .replaceAll('—','-')
+    .replaceAll('–','-')
+    .replaceAll('’',"'")
+    .replaceAll('“','"').replaceAll('”','"');
+}
 function collectParams(){
   return {
     Datei: currentFileLabel,
@@ -644,17 +694,11 @@ function collectParams(){
   };
 }
 function paramsToLines(obj){
-  const nice = {
-    Datei:'Datei', Linien:'Linien', Mode:'Breiten-Modus', R:'R', FWHM:'FWHM [nm]',
-    xmin:'xmin [nm]', xmax:'xmax [nm]', zoom:'Zoom [nm]', dz:'±Zoom [nm]',
-    colorBy:'Farbe unten', prec:'Punkte',
-    orbitMode:'Orbit', T_days:'P [Tage]', A_sin:'A [m/s]', v0:'Vsys [m/s]', phi0:'φ0 [rad]',
-    Mstar:'M⋆ [M☉]', Mpl:'mp [M_Jup]', inc:'i [°]', ecc:'e', omega:'ω [°]', M0:'M0 [rad]',
-    relativistic:'Doppler', vmax:'vmax [m/s]', timeUnit:'Zeitachse'
-  };
   const out=[];
   for (const k of Object.keys(obj)){
-    out.push(`${nice[k]||k}: ${obj[k]}`);
+    const kk = asciiLabelMap(k);
+    const vv = asciiSanitize(obj[k]);
+    out.push(`${kk}: ${vv}`);
   }
   return out;
 }
@@ -666,12 +710,12 @@ async function exportPDF(){
 
   // Titel + Timestamp
   doc.setFont('helvetica','bold'); doc.setFontSize(16);
-  doc.text('Doppler-/RV-Report', margin, y); y += 22;
+  doc.text('Doppler / RV Report', margin, y); y += 22;
   doc.setFont('helvetica','normal'); doc.setFontSize(10);
   const ts = new Date().toLocaleString();
-  doc.text(`Erstellt: ${ts}`, margin, y); y += 16;
+  doc.text(asciiSanitize(`Erstellt: ${ts}`), margin, y); y += 16;
 
-  // Parameterliste
+  // Parameterliste (ASCII)
   const linesTxt = paramsToLines(collectParams());
   const maxWidth = 595 - 2*margin;
   for (const line of linesTxt){
@@ -763,6 +807,17 @@ document.getElementById('share').onclick=()=>{
   const url=`${location.origin}${location.pathname}?${p.toString()}`;
   navigator.clipboard.writeText(url).then(()=>alert('Link kopiert:\n'+url));
 };
+
+// Demo: 0.05 c für Sichtbarkeit
+elDemoRel.addEventListener('click', ()=>{
+  const v_demo = 0.05 * C; // 0.05c
+  elVmax.value = Math.round(v_demo);
+  elV.min = -Math.round(v_demo);
+  elV.max = Math.round(v_demo);
+  elV.value = Math.round(v_demo);
+  elRel.value = 'rel';
+  update();
+});
 
 // URL-Parameter einlesen
 (function(){
