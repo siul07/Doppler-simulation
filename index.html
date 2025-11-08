@@ -32,7 +32,7 @@
 </head>
 <body>
 <header>
-  <h1>Dopplereffekt-Simulation (Radialgeschwindigkeit) - Luis Marshall <span class="pill">client-side</span></h1>
+  <h1>Dopplereffekt-Simulation (Radialgeschwindigkeit) <span class="pill">client-side</span></h1>
   <div class="muted">Interaktive Rot/Blauverschiebung von Spektrallinien</div>
 </header>
 <main>
@@ -54,7 +54,7 @@
         </div>
       </div>
 
-      <!-- Linienbreite -->
+      <!-- Linienbreite: R oder konstante FWHM -->
       <div class="inline" style="margin-top:8px">
         <div>
           <label for="widthMode">Linienbreite</label>
@@ -83,6 +83,7 @@
           <input id="xmax" type="number" value="800" step="1" />
         </div>
       </div>
+
       <div class="inline" style="margin-top:8px">
         <div>
           <label for="zoom">Zoom-Zentrum [nm]</label>
@@ -93,6 +94,19 @@
           <input id="dz" type="number" value="0.05" step="0.01" />
         </div>
       </div>
+
+      <!-- Linien-Auswahl: setzt Zoomzentrum -->
+      <div class="inline" style="margin-top:8px">
+        <div>
+          <label for="presetLine">Zoom auf Linie</label>
+          <select id="presetLine"></select>
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <button id="centerZoom">Auf Linie zentrieren</button>
+        </div>
+      </div>
+
       <div class="inline" style="margin-top:8px">
         <div>
           <label for="colorBy">Farbe</label>
@@ -108,7 +122,6 @@
         </div>
       </div>
 
-      <!-- Bedienelemente -->
       <div class="btnrow">
         <button id="play">Play</button>
         <button id="png1">PNG Gesamt</button>
@@ -130,7 +143,7 @@
   </div>
 </main>
 <footer>
-  <div class="hint"></div>
+  <div class="hint">Hinweis: Alles läuft rein im Browser (keine Datenuploads). Du kannst die Seite offline speichern oder über GitHub Pages veröffentlichen.</div>
 </footer>
 
 <script>
@@ -140,12 +153,16 @@
 const C = 299792458.0; // m/s
 const NM = 1e-9;
 
-// Default-Linien (Name, λ[nm], Amplitude)
+// Default-Linien (Name, λ[nm], Amplitude) – Balmer-Serie
 let lines = [
-  ["Hα", 656.279, 0.80],
-  ["Hβ", 486.133, 0.40],
-  ["Hγ", 434.047, 0.35],
-  ["Hδ", 410.174, 0.30]
+  ["Hα", 656.2790, 0.50],
+  ["Hβ", 486.1350, 0.50],
+  ["Hγ", 434.0472, 0.50],
+  ["Hδ", 410.1734, 0.50],
+  ["Hε", 397.0075, 0.50],
+  ["Hζ", 388.9064, 0.50],
+  ["Hη", 383.5397, 0.50],
+  ["Hθ", 379.7909, 0.50]
 ];
 
 // UI-Refs
@@ -166,6 +183,7 @@ const elColorBy= document.getElementById('colorBy');
 const elPrec   = document.getElementById('prec');
 const elMeta   = document.getElementById('meta');
 const elInfo   = document.getElementById('infobox');
+const elPreset = document.getElementById('presetLine');
 
 let x=[], y=[], xZoom=[], yZoom=[];
 let currentFileLabel = "–";
@@ -173,6 +191,25 @@ let timer=null, dir=1;
 
 // Utils
 function clamp(v,a,b){ return Math.min(b, Math.max(a,v)); }
+
+// Namen normalisieren: "H-alpha" -> "Hα", etc.
+function greekify(name){
+  const s = String(name).trim();
+  const map = [
+    [/h[-\s_]*alpha/gi, "Hα"],
+    [/h[-\s_]*beta/gi,  "Hβ"],
+    [/h[-\s_]*gamma/gi, "Hγ"],
+    [/h[-\s_]*delta/gi, "Hδ"],
+    [/h[-\s_]*eps(il(on)?)?/gi, "Hε"],
+    [/h[-\s_]*zeta/gi,  "Hζ"],
+    [/h[-\s_]*eta/gi,   "Hη"],
+    [/h[-\s_]*theta/gi, "Hθ"]
+  ];
+  let out = s;
+  for (const [re, repl] of map) out = out.replace(re, repl);
+  return out;
+}
+
 function wavelengthToRGB(l){
   let r=0,g=0,b=0;
   if (l<380 || l>780) return 'rgb(128,128,128)';
@@ -206,7 +243,8 @@ function parseTab(text){
     }
     if (floats.length<2) continue;
     lam.push(floats[0]); amp.push(floats[1]);
-    name.push(nonfloats.length? nonfloats.join(' ') : `line_${lam.length}`);
+    const nm = nonfloats.length? nonfloats.join(' ') : `line_${lam.length}`;
+    name.push(greekify(nm));
   }
   if (!lam.length) throw new Error("Keine verwertbaren Zeilen in der .tab gefunden.");
   return {name, lam, amp};
@@ -228,6 +266,23 @@ function synthSpectrum(x, lam_nm, amp, v_ms, mode, R, FWHM){
   for(let i=0;i<x.length;i++) out[i]=Math.max(0, Math.min(1.1, 1-yAbs[i]));
   return out;
 }
+
+// Preset-Menü befüllen (Dropdown)
+function populatePresetMenu() {
+  elPreset.innerHTML = "";
+  [...lines].sort((a,b)=>a[1]-b[1]).forEach(L=>{
+    const opt = document.createElement('option');
+    opt.value = String(L[1]);
+    opt.textContent = `${L[0]} — ${L[1].toFixed(3)} nm`;
+    elPreset.appendChild(opt);
+  });
+  const zc = Number(elZoom.value);
+  let best = 0, bestd = Infinity;
+  lines.forEach((L,i)=>{ const d=Math.abs(L[1]-zc); if(d<bestd){bestd=d; best=i;} });
+  elPreset.value = String(lines[best][1]);
+}
+
+// Wellenlängenfarb-Rendering in Segmenten
 function decimateForColor(xs, ys, maxSeg=600){
   const n=xs.length; if(n<=maxSeg) return [{x:xs,y:ys}];
   const step=Math.floor(n/maxSeg), arr=[];
@@ -256,11 +311,41 @@ function update(){
   while (ix0<x.length && x[ix0]<xzMin) ix0++; ix1=ix0; while (ix1<x.length && x[ix1]<=xzMax) ix1++;
   xZoom=x.slice(ix0, ix1); yZoom=y.slice(ix0, ix1);
 
-  draw(v, colorBy, zc);
+  draw(v, colorBy);
   elMeta.textContent=`Datei: ${currentFileLabel} | Linien: ${lines.length} | ${mode==='R'?'R≈'+R:'FWHM≈'+FWHM+' nm'} | Punkte: ${npts}`;
 
   const z=v/C, dlam_pm=(zc*(1+v/C)-zc)*1e3, nu0=C/(zc*NM), dnu_GHz=-(nu0*v/C)/1e9;
   elInfo.textContent=`z = ${z.toFixed(6)} • Δλ = ${dlam_pm>=0?'+':''}${dlam_pm.toFixed(3)} pm • Δν = ${dnu_GHz>=0?'+':''}${dnu_GHz.toFixed(3)} GHz`;
+}
+
+// Marker (Ruhe+Shift) generieren – Länge bis (1 − Amplitude), inkl. Labels
+function buildLineMarkers(v, colorBy) {
+  const baseColor=(colorBy==='velocity')?colorForV(v):'#888';
+  const shapes=[], ann=[];
+  for (const [nm, l0, A] of lines) {
+    const yTop = 1.0, yBot = Math.max(0, 1.0 - A);
+    // Ruhe
+    shapes.push({
+      type:'line', x0:l0, x1:l0, y0:yBot, y1:yTop,
+      line:{color:'#bfbfbf', width:1, dash:'dot'}
+    });
+    ann.push({
+      x:l0, y:yBot, text:`${nm}`, showarrow:false, yanchor:'top',
+      font:{size:10, color:'#666'}, bgcolor:'#fff', opacity:0.9, bordercolor:'#e6e6e6', borderwidth:1
+    });
+    // Verschoben
+    const ls = l0*(1+v/C);
+    shapes.push({
+      type:'line', x0:ls, x1:ls, y0:yBot, y1:yTop,
+      line:{color:baseColor, width:1.6}
+    });
+    ann.push({
+      x:ls, y:yBot, text:`${nm}\u2032`, showarrow:false, yanchor:'top',
+      font:{size:10, color:(colorBy==='velocity'?baseColor:'#666')}, bgcolor:'#fff',
+      opacity:0.9, bordercolor:'#e6e6e6', borderwidth:1
+    });
+  }
+  return {shapes, ann};
 }
 
 function buildTracesWithColorByWavelength(xs, ys){
@@ -272,14 +357,11 @@ function buildTracesWithColorByWavelength(xs, ys){
   }));
 }
 
-function draw(v, colorBy, zc){
+function draw(v, colorBy){
   const baseColor=(colorBy==='velocity')?colorForV(v):'black';
+  const {shapes:sh1, ann:an1} = buildLineMarkers(v, colorBy);
 
-  const restShapes=lines.map(L=>({type:'line', x0:L[1], x1:L[1], y0:0, y1:1.05,
-    line:{color:'#e6e6e6', width:1, dash:'dot'}}));
-  const shiftShapes=lines.map(L=>{ const s=L[1]*(1+v/C); return {type:'line', x0:s, x1:s, y0:0, y1:1.05,
-    line:{color:(colorBy==='velocity'?baseColor:'#888'), width:1.4}}; });
-
+  // Gesamt
   const data1=(colorBy==='wavelength')?buildTracesWithColorByWavelength(x,y):[{
     x, y, mode:'lines', line:{width:1.4, color:baseColor},
     hovertemplate:'λ %{x:.3f} nm<br>Flux %{y:.3f}<extra></extra>'
@@ -287,28 +369,30 @@ function draw(v, colorBy, zc){
   const layout1={ margin:{l:55,r:15,t:32,b:45},
     xaxis:{title:'Wellenlänge λ [nm]', range:[x[0], x[x.length-1]]},
     yaxis:{title:'Flux', range:[0,1.05]},
-    shapes:[...restShapes, ...shiftShapes],
+    shapes:sh1, annotations:an1,
     title:{text:'Doppler-Verschiebung – Gesamtspektrum', font:{size:16}}
   };
   Plotly.react('g1', data1, layout1, {displayModeBar:false});
 
+  // Zoom
   const data2=(colorBy==='wavelength')?buildTracesWithColorByWavelength(xZoom,yZoom):[{
     x:xZoom, y:yZoom, mode:'lines', line:{width:1.4, color:baseColor},
     hovertemplate:'λ %{x:.4f} nm<br>Flux %{y:.3f}<extra></extra>'
   }];
+
+  const {shapes:sh2, ann:an2} = buildLineMarkers(v, colorBy);
   const lamShift=Number(elZoom.value)*(1+Number(elV.value)/C);
   const dpm=(lamShift-Number(elZoom.value))*1e3;
+
   const layout2={ margin:{l:55,r:15,t:32,b:45},
     xaxis:{title:'λ [nm] (Zoom)', range:[xZoom[0], xZoom[xZoom.length-1]]},
     yaxis:{title:'Flux', range:[0,1.05]},
-    title:{text:`Zoom um ${Number(elZoom.value).toFixed(3)} nm`, font:{size:16}},
-    shapes:[{type:'line', x0:Number(elZoom.value), x1:Number(elZoom.value), y0:0, y1:1.05,
-             line:{color:'#e6e6e6', width:1, dash:'dot'}},
-            {type:'line', x0:lamShift, x1:lamShift, y0:0, y1:1.05,
-             line:{color:(colorBy==='velocity'?baseColor:'#888'), width:1.4}}],
-    annotations:[{x:.98,y:.98,xref:'paper',yref:'paper',
+    shapes:sh2, annotations:[...an2, {
+      x:.98,y:.98,xref:'paper',yref:'paper',
       text:`Δλ @ ${Number(elZoom.value).toFixed(3)} nm: ${dpm>=0?'+':''}${dpm.toFixed(3)} pm`,
-      showarrow:false,bgcolor:'#fff',bordercolor:'#ddd',borderwidth:1,opacity:.9}]
+      showarrow:false,bgcolor:'#fff',bordercolor:'#ddd',borderwidth:1,opacity:.9
+    }],
+    title:{text:`Zoom um ${Number(elZoom.value).toFixed(3)} nm`, font:{size:16}}
   };
   Plotly.react('g2', data2, layout2, {displayModeBar:false});
 }
@@ -321,9 +405,12 @@ elFile.addEventListener('change', async e=>{
     const p=parseTab(text);
     lines=p.name.map((nm,i)=>[nm, p.lam[i], p.amp[i]]);
   }catch(err){ alert("Fehler beim Einlesen: "+err.message); return; }
+  populatePresetMenu();
   update();
 });
-[elV, elVmax, elR, elFWHM, elXmin, elXmax, elZoom, elDz, elColorBy, elPrec].forEach(el=>el.addEventListener('input', update));
+
+[elV, elVmax, elR, elFWHM, elXmin, elXmax, elZoom, elDz, elColorBy, elPrec]
+  .forEach(el=>el.addEventListener('input', update));
 
 elMode.addEventListener('change', ()=>{
   const m=elMode.value;
@@ -331,6 +418,10 @@ elMode.addEventListener('change', ()=>{
   else       { elWrapR.style.display='none';  elWrapF.style.display='block'; }
   update();
 });
+
+// Zoom auf Linie
+elPreset.addEventListener('change', ()=>{ elZoom.value = elPreset.value; update(); });
+document.getElementById('centerZoom').addEventListener('click', ()=>{ elZoom.value = elPreset.value; update(); });
 
 // Play/Pause
 document.getElementById('play').onclick=()=>{
@@ -378,8 +469,8 @@ document.getElementById('share').onclick=()=>{
 })();
 
 // Initial
+populatePresetMenu();
 update();
 </script>
 </body>
 </html>
-
