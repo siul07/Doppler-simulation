@@ -20,7 +20,7 @@
     .inline { display:flex; gap:10px; }
     .inline > div { flex:1; }
     .plots { display:grid; grid-template-columns: 1fr; gap:16px; }
-    #g1, #g2 { width:100%; height:420px; }
+    #g1, #g2, #g3 { width:100%; height:380px; }
     footer { padding:12px 20px; color:#666; font-size:13px; }
     .muted { color:#666; }
     .hint { font-size:12px; color:#555; }
@@ -28,6 +28,7 @@
     .btnrow { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
     .btnrow button { cursor:pointer; background:#f7f7f7; }
     .info { font-size:12px; color:#333; background:#fafafa; border:1px solid #eee; border-radius:8px; padding:8px; margin-top:8px;}
+    .section-title { font-weight:600; margin-top:10px; }
   </style>
 </head>
 <body>
@@ -37,11 +38,13 @@
 </header>
 <main>
   <div class="row">
-    <div class="card" style="max-width:380px">
+    <div class="card" style="max-width:420px">
       <label for="file">Linientabelle (.tab, whitespace-getrennt: Name λ[nm] Amp)</label>
       <input id="file" type="file" accept=".tab,.txt" />
       <div class="hint">Wenn leer, werden Balmer-Defaults verwendet.</div>
       <hr />
+
+      <div class="section-title">Aktueller Doppler</div>
       <div class="inline">
         <div>
           <label for="v">v [m/s]</label>
@@ -54,7 +57,6 @@
         </div>
       </div>
 
-      <!-- Linienbreite: R oder konstante FWHM -->
       <div class="inline" style="margin-top:8px">
         <div>
           <label for="widthMode">Linienbreite</label>
@@ -95,7 +97,6 @@
         </div>
       </div>
 
-      <!-- Linien-Auswahl: setzt Zoomzentrum -->
       <div class="inline" style="margin-top:8px">
         <div>
           <label for="presetLine">Zoom auf Linie</label>
@@ -109,7 +110,7 @@
 
       <div class="inline" style="margin-top:8px">
         <div>
-          <label for="colorBy">Farbe (Unterer Plot)</label>
+          <label for="colorBy">Farbe (unterer Plot)</label>
           <select id="colorBy">
             <option value="velocity">nach Geschwindigkeit (blau/rot/schwarz)</option>
             <option value="fixed">fix (schwarz)</option>
@@ -118,6 +119,35 @@
         <div>
           <label for="prec">Punkte (Performance)</label>
           <input id="prec" type="number" value="200000" min="20000" step="20000" />
+        </div>
+      </div>
+
+      <div class="section-title">Periodischer Modus v(t)</div>
+      <div class="inline">
+        <div>
+          <label for="periodic">Periodisch?</label>
+          <select id="periodic">
+            <option value="off" selected>Aus</option>
+            <option value="on">An (sinus)</option>
+          </select>
+        </div>
+        <div>
+          <label for="T">Periode T [s]</label>
+          <input id="T" type="number" value="10" step="0.1" min="0.1" />
+        </div>
+      </div>
+      <div class="inline" style="margin-top:8px">
+        <div>
+          <label for="A">Amplitude A [m/s]</label>
+          <input id="A" type="number" value="500" step="10" />
+        </div>
+        <div>
+          <label for="v0">Offset v₀ [m/s]</label>
+          <input id="v0" type="number" value="0" step="10" />
+        </div>
+        <div>
+          <label for="phi">Phase φ [rad]</label>
+          <input id="phi" type="number" value="0" step="0.1" />
         </div>
       </div>
 
@@ -133,10 +163,11 @@
       <div class="muted" id="meta">Datei: – | Linien: –</div>
     </div>
 
-    <div class="card" style="flex:2 1 600px">
+    <div class="card" style="flex:2 1 680px">
       <div class="plots">
         <div id="g1"></div>
         <div id="g2"></div>
+        <div id="g3"></div>
       </div>
     </div>
   </div>
@@ -178,15 +209,26 @@ const elXmin   = document.getElementById('xmin');
 const elXmax   = document.getElementById('xmax');
 const elZoom   = document.getElementById('zoom');
 const elDz     = document.getElementById('dz');
-const elColorBy= document.getElementById('colorBy'); // nur für unteren Plot
+const elColorBy= document.getElementById('colorBy');
 const elPrec   = document.getElementById('prec');
 const elMeta   = document.getElementById('meta');
 const elInfo   = document.getElementById('infobox');
 const elPreset = document.getElementById('presetLine');
 
+// Periodik-Refs
+const elPeriodic = document.getElementById('periodic');
+const elT  = document.getElementById('T');
+const elA  = document.getElementById('A');
+const elV0 = document.getElementById('v0');
+const elPhi= document.getElementById('phi');
+
 let x=[], y=[], xZoom=[], yZoom=[];
 let currentFileLabel = "–";
+
+// Animation / Zeit
 let timer=null, dir=1;
+let t=0;                 // Laufzeit in Sekunden
+const dt=0.03;           // Zeitschritt pro Frame (simuliert; ~30 ms)
 
 // Utils
 function clamp(v,a,b){ return Math.min(b, Math.max(a,v)); }
@@ -266,7 +308,7 @@ function synthSpectrum(x, lam_nm, amp, v_ms, mode, R, FWHM){
   return out;
 }
 
-// Preset-Menü befüllen (Dropdown)
+// Dropdown „Zoom auf Linie“
 function populatePresetMenu() {
   elPreset.innerHTML = "";
   [...lines].sort((a,b)=>a[1]-b[1]).forEach(L=>{
@@ -281,7 +323,6 @@ function populatePresetMenu() {
   elPreset.value = String(lines[best][1]);
 }
 
-// Wellenlängenfarb-Rendering in Segmenten
 function decimateForColor(xs, ys, maxSeg=600){
   const n=xs.length; if(n<=maxSeg) return [{x:xs,y:ys}];
   const step=Math.floor(n/maxSeg), arr=[];
@@ -289,10 +330,23 @@ function decimateForColor(xs, ys, maxSeg=600){
   return arr;
 }
 
+// v(t) – wenn Periodisch aktiv; sonst direkt elV
+function currentVelocity(){
+  if (elPeriodic.value!=='on') return Number(elV.value);
+  const T = Math.max(0.0001, Number(elT.value));
+  const A = Number(elA.value);
+  const v0= Number(elV0.value);
+  const phi=Number(elPhi.value);
+  return v0 + A * Math.sin(2*Math.PI*t/T + phi);
+}
+
 // Hauptupdate
 function update(){
   const vmax=Number(elVmax.value); elV.max=vmax; elV.min=-vmax;
-  const v=clamp(Number(elV.value), -vmax, vmax); elV.value=v; elVLabel.textContent=v.toFixed(0);
+
+  // v aus Modus holen und Schieber spiegeln
+  const v = clamp(currentVelocity(), -vmax, vmax);
+  elV.value = v; elVLabel.textContent = v.toFixed(0);
 
   const mode=elMode.value; const R=Math.max(1000, Number(elR.value));
   const FWHM=Math.max(0.000001, Number(elFWHM.value));
@@ -300,7 +354,7 @@ function update(){
   let npts=Math.max(20000, Number(elPrec.value)); npts=Math.min(npts, 600000);
 
   const zc=Number(elZoom.value), dz=Number(elDz.value);
-  const colorByBottom=elColorBy.value; // nur für unteren Plot
+  const colorByBottom=elColorBy.value;
 
   if (x.length!==npts || x[0]!==xmin || x[x.length-1]!==xmax) x=Array.from(buildAxis(xmin, xmax, npts));
 
@@ -311,31 +365,29 @@ function update(){
   while (ix0<x.length && x[ix0]<xzMin) ix0++; ix1=ix0; while (ix1<x.length && x[ix1]<=xzMax) ix1++;
   xZoom=x.slice(ix0, ix1); yZoom=y.slice(ix0, ix1);
 
-  draw(v, colorByBottom); // oben immer Wellenlängenfarbmodus, unten je nach Auswahl
+  drawSpectra(v, colorByBottom);
+  drawTimeSeries(); // neuer Zeitplot
+
   elMeta.textContent=`Datei: ${currentFileLabel} | Linien: ${lines.length} | ${mode==='R'?'R≈'+R:'FWHM≈'+FWHM+' nm'} | Punkte: ${npts}`;
 
   const z=v/C, dlam_pm=(zc*(1+v/C)-zc)*1e3, nu0=C/(zc*NM), dnu_GHz=-(nu0*v/C)/1e9;
   elInfo.textContent=`z = ${z.toFixed(6)} • Δλ = ${dlam_pm>=0?'+':''}${dlam_pm.toFixed(3)} pm • Δν = ${dnu_GHz>=0?'+':''}${dnu_GHz.toFixed(3)} GHz`;
 }
 
-// Marker (Ruhe+Shift) generieren – Länge bis (1 − Amplitude), inkl. Labels
-// modeTop: true => Farben nach Wellenlänge; false => unten (velocity/fixed)
+// Marker (Ruhe+Shift) – Länge bis (1 − Amplitude)
 function buildLineMarkers(v, modeTop, colorByBottom) {
   const shapes=[], ann=[];
   for (const [nm, l0, A] of lines) {
     const yTop = 1.0, yBot = Math.max(0, 1.0 - A);
-    // Farben bestimmen
     const restColor = modeTop ? wavelengthToRGB(l0) : '#bfbfbf';
     const shiftColor = modeTop
       ? wavelengthToRGB(l0*(1+v/C))
       : (colorByBottom==='velocity' ? colorForV(v) : '#000');
 
-    // Ruhe
     shapes.push({ type:'line', x0:l0, x1:l0, y0:yBot, y1:yTop, line:{color:restColor, width:1, dash: modeTop?'solid':'dot'} });
     ann.push({ x:l0, y:yBot, text:`${nm}`, showarrow:false, yanchor:'top',
       font:{size:10, color:'#555'}, bgcolor:'#fff', opacity:0.9, bordercolor:'#e6e6e6', borderwidth:1 });
 
-    // Verschoben
     const ls = l0*(1+v/C);
     shapes.push({ type:'line', x0:ls, x1:ls, y0:yBot, y1:yTop, line:{color:shiftColor, width:1.6} });
     ann.push({ x:ls, y:yBot, text:`${nm}\u2032`, showarrow:false, yanchor:'top',
@@ -344,7 +396,6 @@ function buildLineMarkers(v, modeTop, colorByBottom) {
   return {shapes, ann};
 }
 
-// Traces
 function tracesColorByWavelength(xs, ys){
   return decimateForColor(xs, ys, 600).map(seg=>({
     x:seg.x, y:seg.y, mode:'lines',
@@ -354,10 +405,8 @@ function tracesColorByWavelength(xs, ys){
   }));
 }
 
-function draw(v, colorByBottom){
-  const baseColorBottom=(colorByBottom==='velocity')?colorForV(v):'black';
-
-  // OBERER PLOT: IMMER nach Wellenlänge eingefärbt
+function drawSpectra(v, colorByBottom){
+  // OBERER PLOT: nach Wellenlänge eingefärbt
   const topTraces = tracesColorByWavelength(x, y);
   const {shapes:topShapes, ann:topAnn} = buildLineMarkers(v, true, colorByBottom);
   const layout1={ margin:{l:55,r:15,t:32,b:45},
@@ -368,7 +417,8 @@ function draw(v, colorByBottom){
   };
   Plotly.react('g1', topTraces, layout1, {displayModeBar:false});
 
-  // UNTERER PLOT: Farbmodus wie gewünscht (velocity oder fixed)
+  // UNTERER PLOT: velocity/fixed
+  const baseColorBottom=(colorByBottom==='velocity')?colorForV(v):'black';
   const bottomTraces=[{
     x:xZoom, y:yZoom, mode:'lines',
     line:{width:1.4, color:baseColorBottom},
@@ -393,7 +443,52 @@ function draw(v, colorByBottom){
   Plotly.react('g2', bottomTraces, layout2, {displayModeBar:false});
 }
 
-// Events
+// --- Zeitplot ---------------------------------------------------------------
+function drawTimeSeries(){
+  const T = Math.max(0.0001, Number(elT.value));
+  const A = Number(elA.value);
+  const v0= Number(elV0.value);
+  const phi=Number(elPhi.value);
+
+  // Zeitachse: zwei Perioden
+  const N = 400;
+  const t0 = Math.floor(t / T) * T;       // Start an Periodenanfang
+  const tStart = t0 - T;                   // eine Periode davor
+  const tEnd   = t0 + T;                   // eine danach
+  const ts = new Float64Array(N);
+  const vs = new Float64Array(N);
+  const zc = Number(elZoom.value);
+  const dls = new Float64Array(N); // Δλ in pm
+
+  for (let i=0;i<N;i++){
+    ts[i] = tStart + (i/(N-1))*(tEnd - tStart);
+    const v = (elPeriodic.value==='on')
+      ? (v0 + A*Math.sin(2*Math.PI*ts[i]/T + phi))
+      : Number(elV.value);
+    vs[i]  = v;
+    dls[i] = (zc*(1+v/C) - zc)*1e3; // pm
+  }
+
+  const traceV  = { x:Array.from(ts), y:Array.from(vs),
+    name:'v(t) [m/s]', mode:'lines', line:{width:1.6} };
+  const traceDl = { x:Array.from(ts), y:Array.from(dls),
+    name:'Δλ(t) [pm]', mode:'lines', line:{width:1.2, dash:'dot'}, yaxis:'y2' };
+
+  const layout = {
+    margin:{l:55,r:55,t:32,b:45},
+    xaxis:{title:'Zeit t [s]', range:[tStart, tEnd]},
+    yaxis:{title:'v [m/s]'},
+    yaxis2:{title:'Δλ [pm] @ Zoom', overlaying:'y', side:'right'},
+    shapes:[{type:'line', x0:t, x1:t, y0:0, y1:1, xref:'x', yref:'paper',
+             line:{color:'#888', width:1}} ],
+    title:{text:'Zeitverlauf: v(t) und Δλ(t)', font:{size:16}},
+    legend:{orientation:'h', x:0, y:1.12}
+  };
+
+  Plotly.react('g3', [traceV, traceDl], layout, {displayModeBar:false});
+}
+
+// --- Events -----------------------------------------------------------------
 elFile.addEventListener('change', async e=>{
   const f=e.target.files[0]; if(!f) return; currentFileLabel=f.name;
   const text=await f.text();
@@ -405,8 +500,10 @@ elFile.addEventListener('change', async e=>{
   update();
 });
 
-[elV, elVmax, elR, elFWHM, elXmin, elXmax, elZoom, elDz, elColorBy, elPrec]
-  .forEach(el=>el.addEventListener('input', update));
+[
+  elV, elVmax, elR, elFWHM, elXmin, elXmax, elZoom, elDz, elColorBy, elPrec,
+  elPeriodic, elT, elA, elV0, elPhi
+].forEach(el=>el.addEventListener('input', update));
 
 elMode.addEventListener('change', ()=>{
   const m=elMode.value;
@@ -415,20 +512,24 @@ elMode.addEventListener('change', ()=>{
   update();
 });
 
-// Zoom auf Linie
 elPreset.addEventListener('change', ()=>{ elZoom.value = elPreset.value; update(); });
 document.getElementById('centerZoom').addEventListener('click', ()=>{ elZoom.value = elPreset.value; update(); });
 
-// Play/Pause
+// Play/Pause – jetzt zeitorientiert
 document.getElementById('play').onclick=()=>{
   if (timer){ clearInterval(timer); timer=null; return; }
   timer=setInterval(()=>{
-    const vmax=Number(elVmax.value);
-    let v=Number(elV.value)+dir*5;
-    if (v> vmax){ v=vmax; dir=-1; }
-    if (v<-vmax){ v=-vmax; dir=1; }
-    elV.value=v; update();
-  },30);
+    t += dt;                       // Zeit weiterschieben
+    if (elPeriodic.value!=='on'){
+      // alter „Ping-Pong“-Modus für v-Schieber
+      const vmax=Number(elVmax.value);
+      let v=Number(elV.value)+dir*5;
+      if (v> vmax){ v=vmax; dir=-1; }
+      if (v<-vmax){ v=-vmax; dir=1; }
+      elV.value=v;
+    }
+    update();
+  }, 30);
 };
 
 // PNG-Export
@@ -442,7 +543,8 @@ document.getElementById('share').onclick=()=>{
     mode:elMode.value, R:elR.value, FWHM:elFWHM.value,
     xmin:elXmin.value, xmax:elXmax.value,
     zoom:elZoom.value, dz:elDz.value,
-    colorBy:elColorBy.value, prec:elPrec.value
+    colorBy:elColorBy.value, prec:elPrec.value,
+    periodic:elPeriodic.value, T:elT.value, A:elA.value, v0:elV0.value, phi:elPhi.value
   });
   const url=`${location.origin}${location.pathname}?${p.toString()}`;
   navigator.clipboard.writeText(url).then(()=>alert('Link kopiert:\n'+url));
@@ -462,6 +564,11 @@ document.getElementById('share').onclick=()=>{
   if (p.has('dz'))    elDz.value=p.get('dz');
   if (p.has('colorBy')) elColorBy.value=p.get('colorBy');
   if (p.has('prec'))  elPrec.value=p.get('prec');
+  if (p.has('periodic')) elPeriodic.value=p.get('periodic');
+  if (p.has('T')) elT.value=p.get('T');
+  if (p.has('A')) elA.value=p.get('A');
+  if (p.has('v0')) elV0.value=p.get('v0');
+  if (p.has('phi')) elPhi.value=p.get('phi');
 })();
 
 // Initial
