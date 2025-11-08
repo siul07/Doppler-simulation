@@ -109,11 +109,10 @@
 
       <div class="inline" style="margin-top:8px">
         <div>
-          <label for="colorBy">Farbe</label>
+          <label for="colorBy">Farbe (Unterer Plot)</label>
           <select id="colorBy">
             <option value="velocity">nach Geschwindigkeit (blau/rot/schwarz)</option>
             <option value="fixed">fix (schwarz)</option>
-            <option value="wavelength">nach Wellenlänge (violett→rot)</option>
           </select>
         </div>
         <div>
@@ -179,7 +178,7 @@ const elXmin   = document.getElementById('xmin');
 const elXmax   = document.getElementById('xmax');
 const elZoom   = document.getElementById('zoom');
 const elDz     = document.getElementById('dz');
-const elColorBy= document.getElementById('colorBy');
+const elColorBy= document.getElementById('colorBy'); // nur für unteren Plot
 const elPrec   = document.getElementById('prec');
 const elMeta   = document.getElementById('meta');
 const elInfo   = document.getElementById('infobox');
@@ -300,7 +299,8 @@ function update(){
   const xmin=Number(elXmin.value), xmax=Number(elXmax.value);
   let npts=Math.max(20000, Number(elPrec.value)); npts=Math.min(npts, 600000);
 
-  const zc=Number(elZoom.value), dz=Number(elDz.value), colorBy=elColorBy.value;
+  const zc=Number(elZoom.value), dz=Number(elDz.value);
+  const colorByBottom=elColorBy.value; // nur für unteren Plot
 
   if (x.length!==npts || x[0]!==xmin || x[x.length-1]!==xmax) x=Array.from(buildAxis(xmin, xmax, npts));
 
@@ -311,7 +311,7 @@ function update(){
   while (ix0<x.length && x[ix0]<xzMin) ix0++; ix1=ix0; while (ix1<x.length && x[ix1]<=xzMax) ix1++;
   xZoom=x.slice(ix0, ix1); yZoom=y.slice(ix0, ix1);
 
-  draw(v, colorBy);
+  draw(v, colorByBottom); // oben immer Wellenlängenfarbmodus, unten je nach Auswahl
   elMeta.textContent=`Datei: ${currentFileLabel} | Linien: ${lines.length} | ${mode==='R'?'R≈'+R:'FWHM≈'+FWHM+' nm'} | Punkte: ${npts}`;
 
   const z=v/C, dlam_pm=(zc*(1+v/C)-zc)*1e3, nu0=C/(zc*NM), dnu_GHz=-(nu0*v/C)/1e9;
@@ -319,36 +319,33 @@ function update(){
 }
 
 // Marker (Ruhe+Shift) generieren – Länge bis (1 − Amplitude), inkl. Labels
-function buildLineMarkers(v, colorBy) {
-  const baseColor=(colorBy==='velocity')?colorForV(v):'#888';
+// modeTop: true => Farben nach Wellenlänge; false => unten (velocity/fixed)
+function buildLineMarkers(v, modeTop, colorByBottom) {
   const shapes=[], ann=[];
   for (const [nm, l0, A] of lines) {
     const yTop = 1.0, yBot = Math.max(0, 1.0 - A);
+    // Farben bestimmen
+    const restColor = modeTop ? wavelengthToRGB(l0) : '#bfbfbf';
+    const shiftColor = modeTop
+      ? wavelengthToRGB(l0*(1+v/C))
+      : (colorByBottom==='velocity' ? colorForV(v) : '#000');
+
     // Ruhe
-    shapes.push({
-      type:'line', x0:l0, x1:l0, y0:yBot, y1:yTop,
-      line:{color:'#bfbfbf', width:1, dash:'dot'}
-    });
-    ann.push({
-      x:l0, y:yBot, text:`${nm}`, showarrow:false, yanchor:'top',
-      font:{size:10, color:'#666'}, bgcolor:'#fff', opacity:0.9, bordercolor:'#e6e6e6', borderwidth:1
-    });
+    shapes.push({ type:'line', x0:l0, x1:l0, y0:yBot, y1:yTop, line:{color:restColor, width:1, dash: modeTop?'solid':'dot'} });
+    ann.push({ x:l0, y:yBot, text:`${nm}`, showarrow:false, yanchor:'top',
+      font:{size:10, color:'#555'}, bgcolor:'#fff', opacity:0.9, bordercolor:'#e6e6e6', borderwidth:1 });
+
     // Verschoben
     const ls = l0*(1+v/C);
-    shapes.push({
-      type:'line', x0:ls, x1:ls, y0:yBot, y1:yTop,
-      line:{color:baseColor, width:1.6}
-    });
-    ann.push({
-      x:ls, y:yBot, text:`${nm}\u2032`, showarrow:false, yanchor:'top',
-      font:{size:10, color:(colorBy==='velocity'?baseColor:'#666')}, bgcolor:'#fff',
-      opacity:0.9, bordercolor:'#e6e6e6', borderwidth:1
-    });
+    shapes.push({ type:'line', x0:ls, x1:ls, y0:yBot, y1:yTop, line:{color:shiftColor, width:1.6} });
+    ann.push({ x:ls, y:yBot, text:`${nm}\u2032`, showarrow:false, yanchor:'top',
+      font:{size:10, color:shiftColor}, bgcolor:'#fff', opacity:0.9, bordercolor:'#e6e6e6', borderwidth:1 });
   }
   return {shapes, ann};
 }
 
-function buildTracesWithColorByWavelength(xs, ys){
+// Traces
+function tracesColorByWavelength(xs, ys){
   return decimateForColor(xs, ys, 600).map(seg=>({
     x:seg.x, y:seg.y, mode:'lines',
     line:{width:1.4, color:wavelengthToRGB(seg.x[0])},
@@ -357,44 +354,43 @@ function buildTracesWithColorByWavelength(xs, ys){
   }));
 }
 
-function draw(v, colorBy){
-  const baseColor=(colorBy==='velocity')?colorForV(v):'black';
-  const {shapes:sh1, ann:an1} = buildLineMarkers(v, colorBy);
+function draw(v, colorByBottom){
+  const baseColorBottom=(colorByBottom==='velocity')?colorForV(v):'black';
 
-  // Gesamt
-  const data1=(colorBy==='wavelength')?buildTracesWithColorByWavelength(x,y):[{
-    x, y, mode:'lines', line:{width:1.4, color:baseColor},
-    hovertemplate:'λ %{x:.3f} nm<br>Flux %{y:.3f}<extra></extra>'
-  }];
+  // OBERER PLOT: IMMER nach Wellenlänge eingefärbt
+  const topTraces = tracesColorByWavelength(x, y);
+  const {shapes:topShapes, ann:topAnn} = buildLineMarkers(v, true, colorByBottom);
   const layout1={ margin:{l:55,r:15,t:32,b:45},
     xaxis:{title:'Wellenlänge λ [nm]', range:[x[0], x[x.length-1]]},
     yaxis:{title:'Flux', range:[0,1.05]},
-    shapes:sh1, annotations:an1,
+    shapes:topShapes, annotations:topAnn,
     title:{text:'Doppler-Verschiebung – Gesamtspektrum', font:{size:16}}
   };
-  Plotly.react('g1', data1, layout1, {displayModeBar:false});
+  Plotly.react('g1', topTraces, layout1, {displayModeBar:false});
 
-  // Zoom
-  const data2=(colorBy==='wavelength')?buildTracesWithColorByWavelength(xZoom,yZoom):[{
-    x:xZoom, y:yZoom, mode:'lines', line:{width:1.4, color:baseColor},
+  // UNTERER PLOT: Farbmodus wie gewünscht (velocity oder fixed)
+  const bottomTraces=[{
+    x:xZoom, y:yZoom, mode:'lines',
+    line:{width:1.4, color:baseColorBottom},
     hovertemplate:'λ %{x:.4f} nm<br>Flux %{y:.3f}<extra></extra>'
   }];
 
-  const {shapes:sh2, ann:an2} = buildLineMarkers(v, colorBy);
+  const {shapes:botShapes, ann:botAnn} = buildLineMarkers(v, false, colorByBottom);
   const lamShift=Number(elZoom.value)*(1+Number(elV.value)/C);
   const dpm=(lamShift-Number(elZoom.value))*1e3;
 
   const layout2={ margin:{l:55,r:15,t:32,b:45},
     xaxis:{title:'λ [nm] (Zoom)', range:[xZoom[0], xZoom[xZoom.length-1]]},
     yaxis:{title:'Flux', range:[0,1.05]},
-    shapes:sh2, annotations:[...an2, {
+    shapes:botShapes,
+    annotations:[...botAnn, {
       x:.98,y:.98,xref:'paper',yref:'paper',
       text:`Δλ @ ${Number(elZoom.value).toFixed(3)} nm: ${dpm>=0?'+':''}${dpm.toFixed(3)} pm`,
       showarrow:false,bgcolor:'#fff',bordercolor:'#ddd',borderwidth:1,opacity:.9
     }],
     title:{text:`Zoom um ${Number(elZoom.value).toFixed(3)} nm`, font:{size:16}}
   };
-  Plotly.react('g2', data2, layout2, {displayModeBar:false});
+  Plotly.react('g2', bottomTraces, layout2, {displayModeBar:false});
 }
 
 // Events
