@@ -183,6 +183,19 @@
         </div>
       </div>
 
+      <div class="inline" style="margin-top:8px">
+        <div>
+          <label for="timeUnit">Zeitachse</label>
+          <select id="timeUnit">
+            <option value="s" selected>Sekunden</option>
+            <option value="min">Minuten</option>
+            <option value="h">Stunden</option>
+            <option value="d">Tage</option>
+            <option value="y">Jahre</option>
+          </select>
+        </div>
+      </div>
+
       <div class="btnrow">
         <button id="play">Play</button>
         <button id="png1">PNG Gesamt</button>
@@ -211,15 +224,16 @@
 <script>
 "use strict";
 
-// Physikalische Konstanten
-const C = 299792458.0;                      // m/s
-const G = 6.67430e-11;                      // SI
-const M_SUN  = 1.98847e30;                  // kg
-const M_JUP  = 1.89813e27;                  // kg
-const DAY    = 86400.0;                     // s
+// --- Konstanten ---
+const C = 299792458.0;
+const G = 6.67430e-11;
+const M_SUN  = 1.98847e30;
+const M_JUP  = 1.89813e27;
+const DAY    = 86400.0;
+const YEAR   = 365.25*DAY;
 const NM     = 1e-9;
 
-// Standard-Balmerlinien (Name, λ[nm], Amplitude)
+// Standard-Balmerlinien
 let lines = [
   ["Hα", 656.2790, 0.50],
   ["Hβ", 486.1350, 0.50],
@@ -231,7 +245,7 @@ let lines = [
   ["Hθ", 379.7909, 0.50]
 ];
 
-// --- UI-Refs ---
+// --- UI ---
 const elFile   = document.getElementById('file');
 const elV      = document.getElementById('v');
 const elVLabel = document.getElementById('vLabel');
@@ -251,7 +265,6 @@ const elMeta   = document.getElementById('meta');
 const elInfo   = document.getElementById('infobox');
 const elPreset = document.getElementById('presetLine');
 
-// Orbit/UI
 const elOrbitMode = document.getElementById('orbitMode');
 const elT_days = document.getElementById('T_days');
 const elA_sin  = document.getElementById('A_sin');
@@ -265,14 +278,14 @@ const elEcc   = document.getElementById('ecc');
 const elOmega = document.getElementById('omega');
 const elM0    = document.getElementById('M0');
 
+const elTimeUnit = document.getElementById('timeUnit');
+
 // Datenpuffer
 let x=[], y=[], xZoom=[], yZoom=[];
 let currentFileLabel = "–";
 
-// Zeit-Animation
-let timer=null, dir=1;      // dir nur für „off“/Sinus, Kepler nutzt echte Zeit
-let t=0;                    // s
-const dt=0.03;              // s pro Frame (simuliert ~30ms)
+// Animation
+let timer=null, dir=1, t=0, dt=0.03;
 
 // --- Utils ---
 function clamp(v,a,b){ return Math.min(b, Math.max(a,v)); }
@@ -341,12 +354,10 @@ function decimateForColor(xs,ys,maxSeg=600){
     const j=Math.min(i+step,n-1); arr.push({x:xs.slice(i,j+1),y:ys.slice(i,j+1)});} return arr;
 }
 
-// --- Kepler: RV(t) ---
-// Kepler-Gleichung: M = E - e sin E (löse nach E)
+// Kepler
 function solveE(M,e){
-  // bring M in [-pi, pi] für bessere Konvergenz
   M = Math.atan2(Math.sin(M), Math.cos(M));
-  let E = (e<0.8) ? M : Math.PI; // Startwert
+  let E = (e<0.8) ? M : Math.PI;
   for (let k=0;k<50;k++){
     const f = E - e*Math.sin(E) - M;
     const fp= 1 - e*Math.cos(E);
@@ -357,35 +368,27 @@ function solveE(M,e){
   return E;
 }
 function rv_kepler(t){
-  const P = Number(elT_days.value)*DAY;          // s
+  const P = Number(elT_days.value)*DAY;
   const e = Number(elEcc.value);
-  const i = Number(elInc.value) * Math.PI/180.0; // rad
-  const w = Number(elOmega.value) * Math.PI/180.0; // rad
-  const M0= Number(elM0.value);                  // rad (bei t=0)
-  const Ms = Number(elMstar.value)*M_SUN;        // kg
-  const Mp = Number(elMpl.value)*M_JUP;          // kg
-  const vsys = Number(elV0.value);               // m/s
-
-  // semi-amplitude K nach (8):
-  // K = (2πG/P)^(1/3) * (Mp sin i) / ( (M*+Mp)^(2/3) * sqrt(1-e^2) )
+  const i = Number(elInc.value) * Math.PI/180.0;
+  const w = Number(elOmega.value) * Math.PI/180.0;
+  const M0= Number(elM0.value);
+  const Ms = Number(elMstar.value)*M_SUN;
+  const Mp = Number(elMpl.value)*M_JUP;
+  const vsys = Number(elV0.value);
   const K = Math.cbrt(2*Math.PI*G / P) * (Mp*Math.sin(i)) / (Math.pow(Ms+Mp, 2/3) * Math.sqrt(1-e*e));
-
-  const n = 2*Math.PI / P;            // mittlere Bewegung
-  const M = M0 + n*t;                 // Mittelanomalie
-  const E = solveE(M, e);             // Exzentrische Anomalie
+  const n = 2*Math.PI / P;
+  const M = M0 + n*t;
+  const E = solveE(M, e);
   const fac = Math.sqrt((1+e)/(1-e));
-  const nu  = 2*Math.atan( fac * Math.tan(E/2) );   // wahre Anomalie
-
-  // (9) v_r*(ν) = K * (cos(ν + ω) + e cos ω) + V_sys
-  const vr = K * (Math.cos(nu + w) + e*Math.cos(w)) + vsys;
-  return vr;
+  const nu  = 2*Math.atan( fac * Math.tan(E/2) );
+  return K * (Math.cos(nu + w) + e*Math.cos(w)) + vsys;
 }
 
-// Orbit-Wrapper (off/sin/kepler)
+// Orbit-Wrapper
 function currentVelocity(){
   const mode = elOrbitMode.value;
   if (mode === 'off') return Number(elV.value);
-
   const vsys = Number(elV0.value);
   const P = Number(elT_days.value)*DAY;
   if (mode === 'sin'){
@@ -393,13 +396,20 @@ function currentVelocity(){
     const phi0 = Number(elPhi0.value);
     return vsys + A*Math.sin(2*Math.PI*t/P + phi0);
   }
-  // Kepler
   return rv_kepler(t);
 }
 
-// --- Update/Draw ---
-let needAxis = true; // für initiale Achsensetzung
+// Zeitachsen-Skalierung
+function timeScale() {
+  const u = elTimeUnit.value;
+  if (u === 's')   return { f: 1,             label: 'Zeit t [s]'   };
+  if (u === 'min') return { f: 1/60,          label: 'Zeit t [min]' };
+  if (u === 'h')   return { f: 1/3600,        label: 'Zeit t [h]'   };
+  if (u === 'd')   return { f: 1/DAY,         label: 'Zeit t [d]'   };
+  return { f: 1/YEAR, label: 'Zeit t [yr]' }; // 'y'
+}
 
+// --- Update/Draw ---
 function update(){
   const vmax=Number(elVmax.value); elV.max=vmax; elV.min=-vmax;
 
@@ -424,7 +434,7 @@ function update(){
   xZoom=x.slice(ix0, ix1); yZoom=y.slice(ix0, ix1);
 
   drawSpectra(v, colorByBottom);
-  drawTimeSeries(); // Kurven immer zeichnen
+  drawTimeSeries();
 
   elMeta.textContent = `Datei: ${currentFileLabel} | Linien: ${lines.length} | ${mode==='R'?'R≈'+R:'FWHM≈'+FWHM+' nm'} | Punkte: ${npts}`;
 
@@ -454,13 +464,11 @@ function tracesColorByWavelength(xs,ys){
   }));
 }
 function drawSpectra(v, colorByBottom){
-  // oben: Wellenlängenfarbe
   const topTraces=tracesColorByWavelength(x,y);
   const {shapes:topShapes, ann:topAnn}=buildLineMarkers(v,true,colorByBottom);
   const layout1={margin:{l:55,r:15,t:32,b:45},xaxis:{title:'Wellenlänge λ [nm]',range:[x[0],x[x.length-1]]},yaxis:{title:'Flux',range:[0,1.05]},shapes:topShapes,annotations:topAnn,title:{text:'Doppler-Verschiebung – Gesamtspektrum',font:{size:16}}};
   Plotly.react('g1', topTraces, layout1, {displayModeBar:false});
 
-  // unten: velocity/fixed
   const baseColorBottom=(colorByBottom==='velocity')?colorForV(v):'black';
   const bottomTraces=[{x:xZoom,y:yZoom,mode:'lines',line:{width:1.4,color:baseColorBottom},hovertemplate:'λ %{x:.4f} nm<br>Flux %{y:.3f}<extra></extra>'}];
   const {shapes:botShapes, ann:botAnn}=buildLineMarkers(v,false,colorByBottom);
@@ -476,7 +484,6 @@ function drawTimeSeries(){
   const dlamMax = zc * (vmax/C) * 1e3; // pm
   const y2min=-dlamMax, y2max=dlamMax;
 
-  // Zeitfenster: zwei Perioden um t
   const P = Math.max(0.01, Number(elT_days.value))*DAY;
   const N = 500;
   const t0 = (isFinite(P) && P>0) ? Math.floor(t/P)*P : 0;
@@ -492,14 +499,20 @@ function drawTimeSeries(){
     dls[i]=(zc*(1+v/C)-zc)*1e3;
   }
 
-  const traceV  = {x:Array.from(ts), y:Array.from(vs), name:'v(t) [m/s]', mode:'lines', line:{width:1.6}};
-  const traceDl = {x:Array.from(ts), y:Array.from(dls), name:'Δλ(t) [pm]', mode:'lines', line:{width:1.2, dash:'dot'}, yaxis:'y2'};
+  // Zeit-Skalierung nur für die Achse/Annotation
+  const { f, label } = timeScale();
+  const xPlot = Array.from(ts, s => s * f);
+  const xNow  = t * f;
+  const xStart = tStart * f, xEnd = tEnd * f;
+
+  const traceV  = {x:xPlot, y:Array.from(vs), name:'v(t) [m/s]', mode:'lines', line:{width:1.6}};
+  const traceDl = {x:xPlot, y:Array.from(dls), name:'Δλ(t) [pm]', mode:'lines', line:{width:1.2, dash:'dot'}, yaxis:'y2'};
 
   const layout={ margin:{l:55,r:55,t:32,b:45},
-    xaxis:{title:'Zeit t [s]', range:[tStart,tEnd]},
+    xaxis:{title:label, range:[xStart,xEnd]},
     yaxis:{title:'v [m/s]', range:[y1min,y1max]},
     yaxis2:{title:'Δλ [pm] @ Zoom', overlaying:'y', side:'right', range:[y2min,y2max]},
-    shapes:[{type:'line', x0:t, x1:t, y0:0, y1:1, xref:'x', yref:'paper', line:{color:'#888', width:1}}],
+    shapes:[{type:'line', x0:xNow, x1:xNow, y0:0, y1:1, xref:'x', yref:'paper', line:{color:'#888', width:1}}],
     title:{text:'Zeitverlauf: v(t) (Kepler/Sinus) und Δλ(t)', font:{size:16}},
     legend:{orientation:'h', x:0, y:1.12}
   };
@@ -517,7 +530,8 @@ elFile.addEventListener('change', async e=>{
 
 [
   elV, elVmax, elR, elFWHM, elXmin, elXmax, elZoom, elDz, elColorBy, elPrec,
-  elOrbitMode, elT_days, elA_sin, elV0, elPhi0, elMstar, elMpl, elInc, elEcc, elOmega, elM0
+  elOrbitMode, elT_days, elA_sin, elV0, elPhi0, elMstar, elMpl, elInc, elEcc, elOmega, elM0,
+  elTimeUnit
 ].forEach(el=>el.addEventListener('input', update));
 
 elMode.addEventListener('change', ()=>{
@@ -527,14 +541,14 @@ elMode.addEventListener('change', ()=>{
   update();
 });
 
-elPreset.addEventListener('change', ()=>{ elZoom.value=elPreset.value; update(); });
-document.getElementById('centerZoom').addEventListener('click', ()=>{ elZoom.value=elPreset.value; update(); });
+document.getElementById('centerZoom').addEventListener('click', ()=>{ elZoom.value=document.getElementById('presetLine').value; update(); });
+document.getElementById('presetLine').addEventListener('change', ()=>{ elZoom.value=document.getElementById('presetLine').value; update(); });
 
 document.getElementById('play').onclick=()=>{
   if(timer){ clearInterval(timer); timer=null; return; }
   timer=setInterval(()=>{
-    t += dt; // echte Zeit
-    if (elOrbitMode.value==='off'){ // alter Bounceslider
+    t += dt;
+    if (elOrbitMode.value==='off'){
       const vmax=Number(elVmax.value);
       let v=Number(elV.value)+dir*5;
       if(v> vmax){ v=vmax; dir=-1; }
@@ -555,13 +569,14 @@ document.getElementById('share').onclick=()=>{
     xmin:elXmin.value, xmax:elXmax.value, zoom:elZoom.value, dz:elDz.value,
     colorBy:elColorBy.value, prec:elPrec.value,
     orbitMode:elOrbitMode.value, T_days:elT_days.value, A_sin:elA_sin.value, v0:elV0.value, phi0:elPhi0.value,
-    Mstar:elMstar.value, Mpl:elMpl.value, inc:elInc.value, ecc:elEcc.value, omega:elOmega.value, M0:elM0.value
+    Mstar:elMstar.value, Mpl:elMpl.value, inc:elInc.value, ecc:elEcc.value, omega:elOmega.value, M0:elM0.value,
+    timeUnit:elTimeUnit.value
   });
   const url=`${location.origin}${location.pathname}?${p.toString()}`;
   navigator.clipboard.writeText(url).then(()=>alert('Link kopiert:\n'+url));
 };
 
-// URL-Parameter einlesen (optional)
+// URL-Parameter einlesen
 (function(){
   const p=new URLSearchParams(window.location.search);
   const set=(el,key)=>{ if(p.has(key)) el.value=p.get(key); };
@@ -569,6 +584,7 @@ document.getElementById('share').onclick=()=>{
   set(elXmin,'xmin'); set(elXmax,'xmax'); set(elZoom,'zoom'); set(elDz,'dz'); set(elColorBy,'colorBy'); set(elPrec,'prec');
   set(elOrbitMode,'orbitMode'); set(elT_days,'T_days'); set(elA_sin,'A_sin'); set(elV0,'v0'); set(elPhi0,'phi0');
   set(elMstar,'Mstar'); set(elMpl,'Mpl'); set(elInc,'inc'); set(elEcc,'ecc'); set(elOmega,'omega'); set(elM0,'M0');
+  set(elTimeUnit,'timeUnit');
   if (p.has('mode')) elMode.dispatchEvent(new Event('change'));
 })();
 
@@ -578,6 +594,3 @@ update();
 </script>
 </body>
 </html>
-
-
-
