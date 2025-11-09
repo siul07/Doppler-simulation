@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Dopplereffekt-Simulation - Luis Marshall</title>
   <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
-  <!-- PDF-Export -->
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <style>
     :root { --fg:#111; --bg:#fff; --muted:#777; }
@@ -33,7 +32,6 @@
     .section-title { font-weight:600; margin-top:10px; }
     details { border:1px dashed #e5e7eb; border-radius:8px; padding:8px 10px; background:#fcfcff; }
     details > summary { cursor:pointer; font-weight:600; color:#334155; margin:-8px -10px 8px; padding:8px 10px; }
-    .note { font-size:12px; color:#555; margin-bottom:8px; }
     .disabled-note { font-size:12px; color:#999; }
     .tiny { font-size:11px; color:#555; margin-top:4px; }
   </style>
@@ -77,7 +75,6 @@
         </div>
         <div id="wrapR">
           <label for="R">Wert</label>
-          <!-- Default R = 20000 -->
           <input id="R" type="number" value="20000" min="1000" step="1000" />
         </div>
         <div id="wrapFWHM" style="display:none">
@@ -139,7 +136,6 @@
           <label for="orbitMode">v(t) Modell</label>
           <select id="orbitMode">
             <option value="off" selected>Aus (manuell über Slider)</option>
-            <option value="sin">Sinus (einfach)</option>
             <option value="kepler">Kepler (Exzentrizität)</option>
           </select>
         </div>
@@ -151,16 +147,8 @@
 
       <div class="inline" style="margin-top:8px">
         <div>
-          <label for="A_sin">Sinus: Amplitude A [m/s]</label>
-          <input id="A_sin" type="number" value="500" step="10" />
-        </div>
-        <div>
           <label for="v0">Systemgeschwindigkeit V<sub>sys</sub> [m/s]</label>
           <input id="v0" type="number" value="0" step="1" />
-        </div>
-        <div>
-          <label for="phi0">Sinus: Phase φ₀ [rad]</label>
-          <input id="phi0" type="number" value="0" step="0.1" />
         </div>
       </div>
 
@@ -186,7 +174,6 @@
         </div>
       </div>
 
-      <!-- Erweitert -->
       <details id="advBox" style="margin-top:8px">
         <summary>Erweitert: Argument des Periastrons ω &amp; Mittelanomalie M₀</summary>
         <div class="note">
@@ -243,7 +230,7 @@
       <div class="muted" id="meta">Datei: – | Linien: –</div>
     </div>
 
-    <!-- Rechtes Panel (Plots) -->
+    <!-- Rechtes Panel -->
     <div class="card" style="flex:2 1 680px">
       <div class="plots">
         <div id="g1"></div>
@@ -251,9 +238,8 @@
         <div id="g3"></div>
       </div>
     </div>
-  </div> <!-- Ende .row -->
+  </div>
 
-  <!-- Bild unten, volle Breite (lokale Kopie) -->
   <figure style="margin-top:16px; max-width:1200px; margin-left:auto; margin-right:auto;">
     <img
       src="BahnelementeEllipse.svg"
@@ -270,19 +256,16 @@
   </figure>
 </main>
 
-
-
 <script>
 "use strict";
 
-// --- Konstanten ---
+// Konstanten
 const C = 299792458.0;
 const G = 6.67430e-11;
 const M_SUN  = 1.98847e30;
 const M_JUP  = 1.89813e27;
 const DAY    = 86400.0;
 const YEAR   = 365.25*DAY;
-const NM     = 1e-9;
 
 // Standard-Balmerlinien
 let lines = [
@@ -296,7 +279,7 @@ let lines = [
   ["Hθ", 379.7909, 0.50]
 ];
 
-// --- UI ---
+// UI
 const elFile   = document.getElementById('file');
 const elV      = document.getElementById('v');
 const elVLabel = document.getElementById('vLabel');
@@ -319,9 +302,7 @@ const elRelDiff= document.getElementById('relDiff');
 
 const elOrbitMode = document.getElementById('orbitMode');
 const elT_days = document.getElementById('T_days');
-const elA_sin  = document.getElementById('A_sin');
 const elV0     = document.getElementById('v0');
-const elPhi0   = document.getElementById('phi0');
 
 const elMstar = document.getElementById('Mstar');
 const elMpl   = document.getElementById('Mpl');
@@ -342,7 +323,7 @@ let currentFileLabel = "–";
 // Animation
 let timer=null, dir=1, t=0, dt=0.03;
 
-// --- Utils ---
+// Utils
 function clamp(v,a,b){ return Math.min(b, Math.max(a,v)); }
 function greekify(name){
   const s=String(name).trim();
@@ -466,14 +447,7 @@ function rv_kepler(t){
 function currentVelocity(){
   const mode = elOrbitMode.value;
   if (mode === 'off') return Number(elV.value);
-  const vsys = Number(elV0.value);
-  const P = Number(elT_days.value)*DAY;
-  if (mode === 'sin'){
-    const A = Number(elA_sin.value);
-    const phi0 = Number(elPhi0.value);
-    return vsys + A*Math.sin(2*Math.PI*t/P + phi0);
-  }
-  return rv_kepler(t);
+  return rv_kepler(t); // nur Kepler
 }
 
 // Zeitachsen-Skalierung
@@ -494,7 +468,7 @@ function updateOmegaEnable() {
   elOmegaNote.textContent = disable ? ' (bei e=0 irrelevant)' : '';
 }
 
-// Relativistik-Anzeige: Differenz rel−klass in pm / ppm
+// Relativistik-Anzeige
 function updateRelNote(v, lam0){
   const lamRel = lambdaShift(lam0, v, 'rel');
   const lamCls = lambdaShift(lam0, v, 'classic');
@@ -503,7 +477,7 @@ function updateRelNote(v, lam0){
   elRelDiff.textContent = `Relativistik-Effekt @ Zoom: Δλ(rel−klass) = ${dpm>=0?'+':''}${dpm.toFixed(3)} pm (${ppm.toFixed(2)} ppm)`;
 }
 
-// --- Update/Draw ---
+// Update/Draw
 function update(){
   updateOmegaEnable();
 
@@ -519,7 +493,7 @@ function update(){
 
   const zc=Number(elZoom.value), dz=Number(elDz.value);
   const colorByBottom=elColorBy.value;
-  const relMode = elRel.value; // 'classic' | 'rel'
+  const relMode = elRel.value;
 
   if (x.length!==npts || x[0]!==xmin || x[x.length-1]!==xmax) x=Array.from(buildAxis(xmin, xmax, npts));
 
@@ -537,7 +511,7 @@ function update(){
 
   const lamObs = lambdaShift(zc, v, relMode);
   const dlam_pm = (lamObs - zc)*1e3;
-  const nu0=C/(zc*NM);
+  const nu0= C/(zc*1e-9);
   const nuObs = freqShift(nu0, v, relMode);
   const dnu_GHz = (nuObs - nu0)/1e9;
   const beta = v/C;
@@ -583,24 +557,15 @@ function drawSpectra(v, colorByBottom, relMode){
   Plotly.react('g2', bottomTraces, layout2, {displayModeBar:false});
 }
 
-function timeScale() {
-  const u = elTimeUnit.value;
-  if (u === 's')   return { f: 1,      label: 'Zeit t [s]' };
-  if (u === 'min') return { f: 1/60,   label: 'Zeit t [min]' };
-  if (u === 'h')   return { f: 1/3600, label: 'Zeit t [h]' };
-  if (u === 'd')   return { f: 1/DAY,  label: 'Zeit t [d]' };
-  return { f: 1/YEAR, label: 'Zeit t [yr]' };
-}
-
 function drawTimeSeries(relMode){
   const vmax = Math.max(1, Number(elVmax.value));
   const zc   = Number(elZoom.value);
   const y1min=-vmax, y1max=vmax;
 
-  // Symmetrische Δλ-Skala mit relat./klass. Formel
+  // symm. Δλ-Skala
   const lamPlus = lambdaShift(zc,  vmax, relMode);
   const lamMinus= lambdaShift(zc, -vmax, relMode);
-  const dlamMax = Math.max(Math.abs(lamPlus - zc), Math.abs(lamMinus - zc)) * 1e3; // pm
+  const dlamMax = Math.max(Math.abs(lamPlus - zc), Math.abs(lamMinus - zc)) * 1e3;
   const y2min=-dlamMax, y2max=dlamMax;
 
   const P = Math.max(0.01, Number(elT_days.value))*DAY;
@@ -631,34 +596,32 @@ function drawTimeSeries(relMode){
     yaxis:{title:'v [m/s]', range:[y1min,y1max]},
     yaxis2:{title:'Δλ [pm] @ Zoom', overlaying:'y', side:'right', range:[y2min,y2max]},
     shapes:[{type:'line', x0:xNow, x1:xNow, y0:0, y1:1, xref:'x', yref:'paper', line:{color:'#888', width:1}}],
-    title:{text:'Zeitverlauf: v(t) (Kepler/Sinus) und Δλ(t)', font:{size:16}},
+    title:{text:'Zeitverlauf: v(t) (Kepler) und Δλ(t)', font:{size:16}},
     legend:{orientation:'h', x:0, y:1.12}
   };
   Plotly.react('g3', [traceV, traceDl], layout, {displayModeBar:false});
 }
 
-// --- Export (PNG & PDF) ---
+// Export
 async function exportAllPNGs(){
   await Plotly.downloadImage('g1',{format:'png',filename:'spectrum_full'});
   await Plotly.downloadImage('g2',{format:'png',filename:'spectrum_zoom'});
   await Plotly.downloadImage('g3',{format:'png',filename:'rv_timeseries'});
 }
 
-// ASCII-Labels für PDF (jsPDF Standardfont ist nicht Unicode-fähig)
 function asciiLabelMap(k){
   const map = {
     Datei:'Datei', Linien:'Linien', Mode:'Breiten-Modus',
     R:'R', 'FWHM':'FWHM [nm]',
     xmin:'xmin [nm]', xmax:'xmax [nm]', zoom:'Zoom [nm]', dz:'±Zoom [nm]',
     colorBy:'Farbe unten', prec:'Punkte',
-    orbitMode:'Orbit', T_days:'P [Tage]', A_sin:'A [m/s]', v0:'Vsys [m/s]', phi0:'phi0 [rad]',
+    orbitMode:'Orbit', T_days:'P [Tage]', v0:'Vsys [m/s]',
     Mstar:'Mstar [M_sun]', Mpl:'mp [M_Jup]', inc:'i [deg]', ecc:'e', omega:'omega [deg]', M0:'M0 [rad]',
     relativistic:'Doppler', vmax:'vmax [m/s]', timeUnit:'Zeitachse'
   };
   return map[k] || k;
 }
 function asciiSanitize(s){
-  // ersetze problematische Unicode-Zeichen
   return String(s)
     .replaceAll('⋆','star')
     .replaceAll('°','deg')
@@ -685,7 +648,7 @@ function collectParams(){
     colorBy: elColorBy.value,
     prec: elPrec.value,
     orbitMode: elOrbitMode.value,
-    T_days: elT_days.value, A_sin: elA_sin.value, v0: elV0.value, phi0: elPhi0.value,
+    T_days: elT_days.value, v0: elV0.value,
     Mstar: elMstar.value, Mpl: elMpl.value, inc: elInc.value, ecc: elEcc.value, omega: elOmega.value, M0: elM0.value,
     relativistic: elRel.value,
     vmax: elVmax.value, timeUnit: elTimeUnit.value
@@ -702,18 +665,16 @@ function paramsToLines(obj){
 }
 async function exportPDF(){
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({unit:'pt', format:'a4'}); // 595 x 842 pt
+  const doc = new jsPDF({unit:'pt', format:'a4'});
   const margin = 36;
   let y = margin;
 
-  // Titel + Timestamp
   doc.setFont('helvetica','bold'); doc.setFontSize(16);
   doc.text('Doppler / RV Report', margin, y); y += 22;
   doc.setFont('helvetica','normal'); doc.setFontSize(10);
   const ts = new Date().toLocaleString();
   doc.text(asciiSanitize(`Erstellt: ${ts}`), margin, y); y += 16;
 
-  // Parameterliste (ASCII)
   const linesTxt = paramsToLines(collectParams());
   const maxWidth = 595 - 2*margin;
   for (const line of linesTxt){
@@ -723,31 +684,26 @@ async function exportPDF(){
     if (y > 780) { doc.addPage(); y = margin; }
   }
 
-  // Plots in brauchbarer Größe rendern
   const wPlot = 520, hPlot = 280;
   const img1 = await Plotly.toImage('g1', {format:'png', width:wPlot, height:hPlot});
   const img2 = await Plotly.toImage('g2', {format:'png', width:wPlot, height:hPlot});
   const img3 = await Plotly.toImage('g3', {format:'png', width:wPlot, height:hPlot});
 
-  // Neue Seite für Abbildungen
   doc.addPage(); y = margin;
   doc.setFont('helvetica','bold'); doc.setFontSize(12);
   doc.text('Abbildungen', margin, y); y += 10;
   doc.setFont('helvetica','normal');
 
-  // Bild 1
   y += 8; doc.addImage(img1, 'PNG', margin, y, wPlot, hPlot); y += hPlot + 16;
-  // Bild 2
   if (y + hPlot > 842 - margin) { doc.addPage(); y = margin; }
   doc.addImage(img2, 'PNG', margin, y, wPlot, hPlot); y += hPlot + 16;
-  // Bild 3
   if (y + hPlot > 842 - margin) { doc.addPage(); y = margin; }
   doc.addImage(img3, 'PNG', margin, y, wPlot, hPlot);
 
   doc.save('doppler_rv_report.pdf');
 }
 
-// --- Events ---
+// Events
 elFile.addEventListener('change', async e=>{
   const f=e.target.files[0]; if(!f) return; currentFileLabel=f.name;
   const text=await f.text();
@@ -758,7 +714,7 @@ elFile.addEventListener('change', async e=>{
 
 [
   elV, elVmax, elR, elFWHM, elXmin, elXmax, elZoom, elDz, elColorBy, elPrec,
-  elOrbitMode, elT_days, elA_sin, elV0, elPhi0, elMstar, elMpl, elInc, elEcc, elOmega, elM0,
+  elOrbitMode, elT_days, elV0, elMstar, elMpl, elInc, elEcc, elOmega, elM0,
   elTimeUnit, elRel
 ].forEach(el=>el.addEventListener('input', update));
 
@@ -798,7 +754,7 @@ document.getElementById('share').onclick=()=>{
     mode:elMode.value, R:elR.value, FWHM:elFWHM.value,
     xmin:elXmin.value, xmax:elXmax.value, zoom:elZoom.value, dz:elDz.value,
     colorBy:elColorBy.value, prec:elPrec.value,
-    orbitMode:elOrbitMode.value, T_days:elT_days.value, A_sin:elA_sin.value, v0:elV0.value, phi0:elPhi0.value,
+    orbitMode:elOrbitMode.value, T_days:elT_days.value, v0:elV0.value,
     Mstar:elMstar.value, Mpl:elMpl.value, inc:elInc.value, ecc:elEcc.value, omega:elOmega.value, M0:elM0.value,
     timeUnit:elTimeUnit.value, relativistic:elRel.value
   });
@@ -806,9 +762,9 @@ document.getElementById('share').onclick=()=>{
   navigator.clipboard.writeText(url).then(()=>alert('Link kopiert:\n'+url));
 };
 
-// Demo: 0.05 c für Sichtbarkeit
+// Demo: 0.05 c
 elDemoRel.addEventListener('click', ()=>{
-  const v_demo = 0.05 * C; // 0.05c
+  const v_demo = 0.05 * C;
   elVmax.value = Math.round(v_demo);
   elV.min = -Math.round(v_demo);
   elV.max = Math.round(v_demo);
@@ -823,7 +779,7 @@ elDemoRel.addEventListener('click', ()=>{
   const set=(el,key)=>{ if(p.has(key)) el.value=p.get(key); };
   set(elV,'v'); set(elVmax,'vmax'); set(elMode,'mode'); set(elR,'R'); set(elFWHM,'FWHM');
   set(elXmin,'xmin'); set(elXmax,'xmax'); set(elZoom,'zoom'); set(elDz,'dz'); set(elColorBy,'colorBy'); set(elPrec,'prec');
-  set(elOrbitMode,'orbitMode'); set(elT_days,'T_days'); set(elA_sin,'A_sin'); set(elV0,'v0'); set(elPhi0,'phi0');
+  set(elOrbitMode,'orbitMode'); set(elT_days,'T_days'); set(elV0,'v0');
   set(elMstar,'Mstar'); set(elMpl,'Mpl'); set(elInc,'inc'); set(elEcc,'ecc'); set(elOmega,'omega'); set(elM0,'M0');
   set(elTimeUnit,'timeUnit'); set(elRel,'relativistic');
   if (p.has('mode')) elMode.dispatchEvent(new Event('change'));
@@ -833,4 +789,3 @@ update();
 </script>
 </body>
 </html>
-
